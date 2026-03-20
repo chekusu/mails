@@ -410,6 +410,60 @@ function createSyncMockD1(options: {
   return { db: { prepare: prepareMock } as unknown as D1Database, prepareMock }
 }
 
+describe('worker: GET /api/email', () => {
+  test('returns email for a unique short id prefix', async () => {
+    let callIndex = 0
+    const prepareMock = mock((_sql: string) => {
+      const currentCall = callIndex++
+      return {
+        bind: mock((..._args: unknown[]) => ({
+          first: mock(() => {
+            if (currentCall === 0) return Promise.resolve(null)
+            return Promise.resolve(null)
+          }),
+          all: mock(() => {
+            if (currentCall === 1) return Promise.resolve({ results: [makeSyncEmail({ id: 'sync-e1-full' })] })
+            if (currentCall === 2) return Promise.resolve({ results: [] })
+            return Promise.resolve({ results: [] })
+          }),
+        })),
+      }
+    })
+
+    const env: Env = { DB: { prepare: prepareMock } as unknown as D1Database }
+    const response = await worker.fetch(new Request('http://localhost/api/email?id=sync-e1'), env)
+    const json = await response.json() as { id: string }
+
+    expect(response.status).toBe(200)
+    expect(json.id).toBe('sync-e1-full')
+  })
+
+  test('returns 409 for ambiguous short id prefix', async () => {
+    let callIndex = 0
+    const prepareMock = mock((_sql: string) => {
+      const currentCall = callIndex++
+      return {
+        bind: mock((..._args: unknown[]) => ({
+          first: mock(() => Promise.resolve(null)),
+          all: mock(() => {
+            if (currentCall === 1) {
+              return Promise.resolve({ results: [makeSyncEmail({ id: 'sync-e1' }), makeSyncEmail({ id: 'sync-e2' })] })
+            }
+            return Promise.resolve({ results: [] })
+          }),
+        })),
+      }
+    })
+
+    const env: Env = { DB: { prepare: prepareMock } as unknown as D1Database }
+    const response = await worker.fetch(new Request('http://localhost/api/email?id=sync-e'), env)
+    const json = await response.json() as { error: string }
+
+    expect(response.status).toBe(409)
+    expect(json.error).toContain('Ambiguous email id: sync-e')
+  })
+})
+
 describe('worker: GET /api/sync', () => {
   test('returns emails since timestamp', async () => {
     const email1 = makeSyncEmail({ id: 'e1', received_at: '2026-03-19T10:00:00Z' })

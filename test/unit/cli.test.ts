@@ -281,7 +281,7 @@ describe('CLI: inbox command', () => {
     await inboxCommand([])
 
     const line = output.join('\n')
-    expect(line).toContain('no-att-1')
+    expect(line).toContain('no-att-12345')
     expect(line).toContain('Plain email')
     expect(line).not.toContain('+')  // no "+Natt" indicator
   })
@@ -391,3 +391,4 @@ describe('CLI: inbox command', () => {
     expect(text).toContain('5000 bytes')
   })
 })
+

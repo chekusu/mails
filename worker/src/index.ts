@@ -220,7 +220,7 @@ async function handleGetEmail(url: URL, env: Env): Promise<Response> {
   const id = url.searchParams.get('id')
   if (!id) return Response.json({ error: 'Missing ?id= parameter' }, { status: 400 })
 
-  const row = await env.DB.prepare('SELECT * FROM emails WHERE id = ?').bind(id).first<{
+  let row = await env.DB.prepare('SELECT * FROM emails WHERE id = ?').bind(id).first<{
     id: string
     mailbox: string
     from_address: string
@@ -244,11 +244,43 @@ async function handleGetEmail(url: URL, env: Env): Promise<Response> {
     created_at: string
   }>()
 
+  if (!row) {
+    const matches = await env.DB.prepare('SELECT * FROM emails WHERE id LIKE ? ORDER BY received_at DESC LIMIT 2').bind(`${id}%`).all<{
+      id: string
+      mailbox: string
+      from_address: string
+      from_name: string
+      to_address: string
+      subject: string
+      body_text: string
+      body_html: string
+      code: string | null
+      headers: string
+      metadata: string
+      direction: 'inbound' | 'outbound'
+      status: 'received' | 'sent' | 'failed' | 'queued'
+      message_id: string | null
+      has_attachments: number
+      attachment_count: number
+      attachment_names: string
+      attachment_search_text: string
+      raw_storage_key: string | null
+      received_at: string
+      created_at: string
+    }>()
+
+    if ((matches.results?.length ?? 0) > 1) {
+      return Response.json({ error: `Ambiguous email id: ${id}` }, { status: 409 })
+    }
+
+    row = matches.results?.[0] ?? null
+  }
+
   if (!row) return Response.json({ error: 'Email not found' }, { status: 404 })
 
   const attachments = await env.DB.prepare(
     'SELECT * FROM attachments WHERE email_id = ? ORDER BY mime_part_index ASC'
-  ).bind(id).all<{
+  ).bind(row.id).all<{
     id: string
     email_id: string
     filename: string

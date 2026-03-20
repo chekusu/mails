@@ -147,10 +147,17 @@ export function createSqliteProvider(dbPath?: string): StorageProvider {
     },
 
     async getEmail(id) {
-      const row = db.prepare('SELECT * FROM emails WHERE id = ?').get(id) as Record<string, unknown> | null
+      let row = db.prepare('SELECT * FROM emails WHERE id = ?').get(id) as Record<string, unknown> | null
+      if (!row) {
+        const matches = db.prepare('SELECT * FROM emails WHERE id LIKE ? ORDER BY received_at DESC LIMIT 2').all(`${id}%`) as Record<string, unknown>[]
+        if (matches.length > 1) {
+          throw new Error(`Ambiguous email id: ${id}`)
+        }
+        row = matches[0] ?? null
+      }
       if (!row) return null
       const email = rowToEmail(row)
-      const attRows = db.prepare('SELECT * FROM attachments WHERE email_id = ? ORDER BY mime_part_index ASC').all(id) as Record<string, unknown>[]
+      const attRows = db.prepare('SELECT * FROM attachments WHERE email_id = ? ORDER BY mime_part_index ASC').all(email.id) as Record<string, unknown>[]
       email.attachments = attRows.map(rowToAttachment)
       return email
     },

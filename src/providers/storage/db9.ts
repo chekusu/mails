@@ -225,12 +225,20 @@ export function createDb9Provider(token: string, databaseId: string): StoragePro
     },
 
     async getEmail(id) {
-      const result = await sql(`SELECT ${EMAIL_COLUMNS} FROM emails WHERE id = '${esc(id)}' LIMIT 1`)
-      const emails = rowsToEmails(result)
-      const email = emails[0] ?? null
+      let result = await sql(`SELECT ${EMAIL_COLUMNS} FROM emails WHERE id = '${esc(id)}' LIMIT 1`)
+      let emails = rowsToEmails(result)
+      let email = emails[0] ?? null
+      if (!email) {
+        result = await sql(`SELECT ${EMAIL_COLUMNS} FROM emails WHERE id LIKE '${esc(id)}%' ORDER BY received_at DESC LIMIT 2`)
+        emails = rowsToEmails(result)
+        if (emails.length > 1) {
+          throw new Error(`Ambiguous email id: ${id}`)
+        }
+        email = emails[0] ?? null
+      }
       if (!email) return null
 
-      const attResult = await sql(`SELECT * FROM attachments WHERE email_id = '${esc(id)}' ORDER BY mime_part_index ASC`)
+      const attResult = await sql(`SELECT * FROM attachments WHERE email_id = '${esc(email.id)}' ORDER BY mime_part_index ASC`)
       if (attResult.row_count > 0) {
         const attColumns = getColumnNames(attResult.columns)
         email.attachments = attResult.rows.map(row => {

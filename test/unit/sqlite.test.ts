@@ -67,6 +67,27 @@ describe('SQLite provider', () => {
     expect(await provider.getEmail('nonexistent')).toBeNull()
   })
 
+  test('getEmail resolves a unique id prefix', async () => {
+    const provider = createSqliteProvider(TEST_DB)
+    await provider.init()
+
+    await provider.saveEmail(makeEmail({ id: 'abcd1234-full-id', subject: 'Prefix hit' }))
+
+    const retrieved = await provider.getEmail('abcd1234')
+    expect(retrieved).not.toBeNull()
+    expect(retrieved!.id).toBe('abcd1234-full-id')
+  })
+
+  test('getEmail throws on ambiguous id prefix', async () => {
+    const provider = createSqliteProvider(TEST_DB)
+    await provider.init()
+
+    await provider.saveEmail(makeEmail({ id: 'prefix-1111', subject: 'First' }))
+    await provider.saveEmail(makeEmail({ id: 'prefix-2222', subject: 'Second' }))
+
+    expect(provider.getEmail('prefix-')).rejects.toThrow('Ambiguous email id: prefix-')
+  })
+
   test('getEmails returns emails sorted by received_at DESC', async () => {
     const provider = createSqliteProvider(TEST_DB)
     await provider.init()

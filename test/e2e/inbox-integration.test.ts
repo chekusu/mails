@@ -311,4 +311,32 @@ describe('Integration: inbox CLI with real sqlite', () => {
     expect(exitCode).toBe(1)
     expect(output.join('\n')).toContain('Email not found')
   })
+
+  test('detail mode resolves a unique short id prefix', async () => {
+    const output: string[] = []
+    console.log = (msg?: unknown) => { output.push(String(msg ?? '')) }
+    console.error = () => {}
+    process.exit = (() => {}) as typeof process.exit
+
+    await inboxCommand(['int-att-'])
+
+    const text = output.join('\n')
+    expect(text).toContain('Subject: Report attached')
+    expect(text).toContain('See the attached files.')
+  })
+
+  test('detail mode shows ambiguous id error', async () => {
+    const output: string[] = []
+    let exitCode: number | undefined
+    console.log = () => {}
+    console.error = (msg?: unknown) => { output.push(String(msg ?? '')) }
+    process.exit = ((code?: number) => { exitCode = code; throw new Error('exit') }) as typeof process.exit
+
+    try {
+      await inboxCommand(['int-'])
+    } catch {}
+
+    expect(exitCode).toBe(1)
+    expect(output.join('\n')).toContain('Ambiguous email id: int-')
+  })
 })

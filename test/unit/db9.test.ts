@@ -183,6 +183,52 @@ describe('db9 provider', () => {
     expect(await provider.getEmail('nope')).toBeNull()
   })
 
+  test('getEmail resolves a unique id prefix', async () => {
+    let callCount = 0
+    globalThis.fetch = mock(async () => {
+      callCount++
+      if (callCount === 1) {
+        return new Response(JSON.stringify({ columns: [], rows: [], row_count: 0 }))
+      }
+      if (callCount === 2) {
+        return new Response(JSON.stringify({
+          columns: ['id', 'mailbox', 'from_address', 'from_name', 'to_address', 'subject', 'body_text', 'body_html', 'code', 'headers', 'metadata', 'message_id', 'has_attachments', 'attachment_count', 'attachment_names', 'attachment_search_text', 'direction', 'status', 'received_at', 'created_at'],
+          rows: [
+            ['prefix-1111-full', 'a@b.com', 's@x.com', '', 'a@b.com', 'Sub', 'Body', '', null, '{}', '{}', null, false, 0, '', '', 'inbound', 'received', '2025-01-01', '2025-01-01'],
+          ],
+          row_count: 1,
+        }))
+      }
+      return new Response(JSON.stringify({ columns: [], rows: [], row_count: 0 }))
+    }) as typeof fetch
+
+    const provider = createDb9Provider('token', 'db-123')
+    const email = await provider.getEmail('prefix-1111')
+    expect(email).not.toBeNull()
+    expect(email!.id).toBe('prefix-1111-full')
+  })
+
+  test('getEmail throws on ambiguous id prefix', async () => {
+    let callCount = 0
+    globalThis.fetch = mock(async () => {
+      callCount++
+      if (callCount === 1) {
+        return new Response(JSON.stringify({ columns: [], rows: [], row_count: 0 }))
+      }
+      return new Response(JSON.stringify({
+        columns: ['id', 'mailbox', 'from_address', 'from_name', 'to_address', 'subject', 'body_text', 'body_html', 'code', 'headers', 'metadata', 'message_id', 'has_attachments', 'attachment_count', 'attachment_names', 'attachment_search_text', 'direction', 'status', 'received_at', 'created_at'],
+        rows: [
+          ['prefix-1111', 'a@b.com', 's@x.com', '', 'a@b.com', 'Sub', 'Body', '', null, '{}', '{}', null, false, 0, '', '', 'inbound', 'received', '2025-01-01', '2025-01-01'],
+          ['prefix-2222', 'a@b.com', 's@x.com', '', 'a@b.com', 'Sub', 'Body', '', null, '{}', '{}', null, false, 0, '', '', 'inbound', 'received', '2025-01-02', '2025-01-02'],
+        ],
+        row_count: 2,
+      }))
+    }) as typeof fetch
+
+    const provider = createDb9Provider('token', 'db-123')
+    expect(provider.getEmail('prefix-')).rejects.toThrow('Ambiguous email id: prefix-')
+  })
+
   test('searchEmails builds hybrid FTS query', async () => {
     let executedQuery = ''
     globalThis.fetch = mock(async (_url: string, init: RequestInit) => {
