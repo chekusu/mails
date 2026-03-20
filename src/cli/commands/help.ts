@@ -29,6 +29,7 @@ Send:
 
 Inbox:
   mails inbox                           List recent emails
+  mails inbox --full-id                 List recent emails with full IDs
   mails inbox --mailbox <address>       List emails for a specific mailbox
   mails inbox --query "reset password"  Search emails in a mailbox
   mails inbox --query "invoice" --direction inbound --limit 10

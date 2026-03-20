@@ -258,6 +258,32 @@ describe('CLI: inbox command', () => {
     expect(line).toContain('+2att')
   })
 
+  test('list mode supports --full-id', async () => {
+    const email = makeEmail({ id: 'full-id-12345', subject: 'Full id email' })
+    const output: string[] = []
+
+    mock.module('../../src/core/receive.js', () => ({
+      getInbox: mock(async () => [email]),
+      searchInbox: mock(async () => []),
+      getEmail: mock(async () => null),
+      downloadAttachment: mock(async () => null),
+    }))
+    mock.module('../../src/core/config.js', () => ({
+      loadConfig: () => ({ mailbox: 'agent@test.com', send_provider: 'resend', storage_provider: 'sqlite' }),
+    }))
+
+    console.log = (msg?: unknown) => { output.push(String(msg ?? '')) }
+    console.error = () => {}
+    process.exit = ((code?: number) => { throw new Error(`exit:${code ?? 0}`) }) as typeof process.exit
+
+    const { inboxCommand } = await importInboxCommand()
+    await inboxCommand(['--full-id'])
+
+    const line = output.join('\n')
+    expect(line).toContain('full-id-12345')
+    expect(line).toContain('Full id email')
+  })
+
   test('list mode omits attachment indicator when no attachments', async () => {
     const email = makeEmail({ id: 'no-att-12345', subject: 'Plain email' })
     const getInboxSpy = mock(async () => [email])
@@ -281,7 +307,7 @@ describe('CLI: inbox command', () => {
     await inboxCommand([])
 
     const line = output.join('\n')
-    expect(line).toContain('no-att-12345')
+    expect(line).toContain('no-att-1')
     expect(line).toContain('Plain email')
     expect(line).not.toContain('+')  // no "+Natt" indicator
   })

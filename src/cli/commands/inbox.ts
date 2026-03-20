@@ -102,10 +102,13 @@ export async function inboxCommand(args: string[]) {
     return
   }
 
+  const showFullId = opts['full-id'] !== undefined
+
   for (const email of emails) {
     const code = email.code ? ` [${email.code}]` : ''
     const clip = email.attachment_count ? ` +${email.attachment_count}att` : ''
     const from = email.from_name || email.from_address
-    console.log(`${email.id}  ${email.received_at.slice(0, 16)}  ${from.padEnd(24).slice(0, 24)}  ${email.subject.slice(0, 40)}${code}${clip}`)
+    const displayId = showFullId ? email.id : email.id.slice(0, 8)
+    console.log(`${displayId}  ${email.received_at.slice(0, 16)}  ${from.padEnd(24).slice(0, 24)}  ${email.subject.slice(0, 40)}${code}${clip}`)
   }
 }
