@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS emails (
+CREATE TABLE emails (
   id TEXT PRIMARY KEY,
   mailbox TEXT NOT NULL,
   from_address TEXT NOT NULL,
@@ -22,14 +22,7 @@ CREATE TABLE IF NOT EXISTS emails (
   created_at TEXT NOT NULL
 );
 
-ALTER TABLE emails ADD COLUMN IF NOT EXISTS message_id TEXT;
-ALTER TABLE emails ADD COLUMN IF NOT EXISTS has_attachments INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE emails ADD COLUMN IF NOT EXISTS attachment_count INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE emails ADD COLUMN IF NOT EXISTS attachment_names TEXT DEFAULT '';
-ALTER TABLE emails ADD COLUMN IF NOT EXISTS attachment_search_text TEXT DEFAULT '';
-ALTER TABLE emails ADD COLUMN IF NOT EXISTS raw_storage_key TEXT;
-
-CREATE TABLE IF NOT EXISTS attachments (
+CREATE TABLE attachments (
   id TEXT PRIMARY KEY,
   email_id TEXT NOT NULL,
   filename TEXT NOT NULL,
@@ -44,9 +37,9 @@ CREATE TABLE IF NOT EXISTS attachments (
   created_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_emails_mailbox ON emails(mailbox, received_at DESC);
-CREATE INDEX IF NOT EXISTS idx_emails_code ON emails(mailbox) WHERE code IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_emails_direction ON emails(direction);
-CREATE INDEX IF NOT EXISTS idx_emails_has_attachments ON emails(mailbox, has_attachments, received_at DESC);
-CREATE INDEX IF NOT EXISTS idx_attachments_email_id ON attachments(email_id);
-CREATE INDEX IF NOT EXISTS idx_attachments_filename ON attachments(filename);
+CREATE INDEX idx_emails_mailbox ON emails(mailbox, received_at DESC);
+CREATE INDEX idx_emails_code ON emails(mailbox) WHERE code IS NOT NULL;
+CREATE INDEX idx_emails_direction ON emails(direction);
+CREATE INDEX idx_emails_has_attachments ON emails(mailbox, has_attachments, received_at DESC);
+CREATE INDEX idx_attachments_email_id ON attachments(email_id);
+CREATE INDEX idx_attachments_filename ON attachments(filename);
