@@ -35,6 +35,11 @@ export async function configCommand(args: string[]) {
           console.log(`Set default_from = ${mailbox}`)
         }
       }
+
+      // When worker_url is set, switch to remote storage
+      if (key === 'worker_url') {
+        setConfigValue('storage_provider', 'remote')
+      }
       break
     }
 

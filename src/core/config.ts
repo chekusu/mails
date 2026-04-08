@@ -65,6 +65,9 @@ export async function resolveApiKey(apiKey: string): Promise<string | null> {
     if (data.mailbox) {
       setConfigValue('mailbox', data.mailbox)
       setConfigValue('default_from', data.mailbox)
+      if (data.mailbox.endsWith('@mails.dev')) {
+        setConfigValue('storage_provider', 'remote')
+      }
       return data.mailbox
     }
   } catch {}
