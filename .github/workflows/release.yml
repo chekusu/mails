@@ -55,15 +55,16 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       id-token: write
     steps:
       - uses: actions/checkout@v6
       - uses: oven-sh/setup-bun@v2
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@latest
       - run: bun install
       - run: bun run build
       - run: bun run typecheck
@@ -72,4 +73,4 @@ jobs:
         continue-on-error: true
 
       - name: Publish mails
-        run: npm publish --provenance --access public || true
+        run: npm publish --provenance --access public
