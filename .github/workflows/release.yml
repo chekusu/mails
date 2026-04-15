@@ -67,7 +67,7 @@ jobs:
       - run: bun install
       - run: bun run build
       - run: bun run typecheck
-      - run: bun test test/unit/ test/e2e/flow.test.ts test/e2e/sqlite-search.test.ts
+      - run: bun test --concurrency 1 test/unit/ test/e2e/flow.test.ts test/e2e/sqlite-search.test.ts
 
       - name: Publish mails
         run: npm publish --provenance --access public || true
