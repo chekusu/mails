@@ -73,7 +73,59 @@ describe('Remote provider', () => {
     }) as typeof fetch
 
     const provider = createRemoteProvider({ url: API, mailbox: MAILBOX })
-    expect(await provider.getEmail('nope')).toBeNull()
+    expect(await provider.getEmail('12345678-1234-1234-1234-123456789012')).toBeNull()
+  })
+
+  test('getEmail resolves a short id prefix via inbox fallback', async () => {
+    const calls: string[] = []
+    globalThis.fetch = mock(async (url: string) => {
+      calls.push(url)
+      const parsed = new URL(url)
+      if (parsed.pathname === '/v1/email' && parsed.searchParams.get('id') === 'e5b51d60') {
+        return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 })
+      }
+      if (parsed.pathname === '/v1/inbox') {
+        return new Response(JSON.stringify({
+          emails: [
+            { id: 'e5b51d60-7238-433d-85f6-00f922e73ed3', subject: 'OTP Code' },
+          ],
+        }))
+      }
+      if (parsed.pathname === '/v1/email' && parsed.searchParams.get('id') === 'e5b51d60-7238-433d-85f6-00f922e73ed3') {
+        return new Response(JSON.stringify({
+          id: 'e5b51d60-7238-433d-85f6-00f922e73ed3',
+          subject: 'OTP Code',
+        }))
+      }
+      return new Response(JSON.stringify({ error: 'unexpected' }), { status: 500 })
+    }) as typeof fetch
+
+    const provider = createRemoteProvider({ url: API, mailbox: MAILBOX, apiKey: 'mk_test', token: 'mk_test' })
+    const email = await provider.getEmail('e5b51d60')
+
+    expect(email).not.toBeNull()
+    expect(email!.id).toBe('e5b51d60-7238-433d-85f6-00f922e73ed3')
+    expect(calls.some(url => url.includes('/v1/inbox'))).toBe(true)
+  })
+
+  test('getEmail short id fallback throws for ambiguous matches', async () => {
+    globalThis.fetch = mock(async (url: string) => {
+      if (url.includes('/api/email?id=abcd1234')) {
+        return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 })
+      }
+      if (url.includes('/api/inbox')) {
+        return new Response(JSON.stringify({
+          emails: [
+            { id: 'abcd1234-first', subject: 'First' },
+            { id: 'abcd1234-second', subject: 'Second' },
+          ],
+        }))
+      }
+      return new Response(JSON.stringify({ error: 'unexpected' }), { status: 500 })
+    }) as typeof fetch
+
+    const provider = createRemoteProvider({ url: API, mailbox: MAILBOX, token: 'worker-token' })
+    expect(provider.getEmail('abcd1234')).rejects.toThrow('Ambiguous email id: abcd1234')
   })
 
   test('searchEmails calls /api/inbox with ?query=', async () => {

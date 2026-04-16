@@ -1,4 +1,4 @@
-import { extractCode } from './extract-code'
+import { extractEmailCode } from './extract-code'
 import { parseIncomingEmail } from './mime'
 
 export interface Env {
@@ -80,7 +80,11 @@ export default {
     const now = new Date().toISOString()
     const parsed = await parseIncomingEmail(await new Response(message.raw).arrayBuffer(), id, now)
     const subject = parsed.subject || message.headers.get('subject') || ''
-    const code = extractCode(`${subject} ${parsed.bodyText}`)
+    const code = extractEmailCode({
+      subject,
+      bodyText: parsed.bodyText,
+      bodyHtml: parsed.bodyHtml,
+    })
     const fromName = parseFromName(message.headers.get('from') ?? from)
     const statements = [
       env.DB.prepare(`
@@ -155,7 +159,7 @@ async function handleGetCode(url: URL, env: Env, authorizedMailbox: string): Pro
   const deadline = Date.now() + timeoutSec * 1000
 
   while (Date.now() < deadline) {
-    let query = 'SELECT id, code, from_address, subject, received_at FROM emails WHERE mailbox = ? AND code IS NOT NULL'
+    let query = 'SELECT id, code, from_address, subject, body_text, body_html, received_at FROM emails WHERE mailbox = ?'
     const params: string[] = [authorizedMailbox]
 
     if (since) {
@@ -163,19 +167,28 @@ async function handleGetCode(url: URL, env: Env, authorizedMailbox: string): Pro
       params.push(since)
     }
 
-    query += ' ORDER BY received_at DESC LIMIT 1'
+    query += ' ORDER BY received_at DESC LIMIT 50'
 
-    const row = await env.DB.prepare(query).bind(...params).first<{
-      id: string; code: string; from_address: string; subject: string; received_at: string
+    const rows = await env.DB.prepare(query).bind(...params).all<{
+      id: string
+      code: string | null
+      from_address: string
+      subject: string
+      body_text: string
+      body_html: string
+      received_at: string
     }>()
 
-    if (row) {
+    for (const row of rows.results ?? []) {
+      const resolvedCode = resolveEmailCode(row as Record<string, unknown>)
+      if (!resolvedCode) continue
+
       return Response.json({
-        id: row.id,
-        code: row.code,
-        from: row.from_address,
-        subject: row.subject,
-        received_at: row.received_at,
+        id: (row as { id: string }).id,
+        code: resolvedCode,
+        from: (row as { from_address: string }).from_address,
+        subject: (row as { subject: string }).subject,
+        received_at: (row as { received_at: string }).received_at,
       })
     }
 
@@ -198,8 +211,8 @@ async function handleInbox(url: URL, env: Env, authorizedMailbox: string): Promi
   const query = url.searchParams.get('query')?.trim()
 
   let sql = `
-    SELECT id, mailbox, from_address, from_name, subject, code, direction, status,
-           received_at, has_attachments, attachment_count
+    SELECT id, mailbox, from_address, from_name, subject, body_text, body_html, code,
+           direction, status, received_at, has_attachments, attachment_count
     FROM emails WHERE mailbox = ?`
   const params: (string | number)[] = [authorizedMailbox]
 
@@ -220,11 +233,7 @@ async function handleInbox(url: URL, env: Env, authorizedMailbox: string): Promi
   const rows = await env.DB.prepare(sql).bind(...params).all()
 
   return Response.json({
-    emails: rows.results.map((row) => ({
-      ...row,
-      has_attachments: Boolean((row as { has_attachments?: number }).has_attachments),
-      attachment_count: (row as { attachment_count?: number }).attachment_count ?? 0,
-    })),
+    emails: rows.results.map((row) => toInboxEmail(row as Record<string, unknown>)),
   })
 }
 
@@ -308,17 +317,12 @@ async function handleGetEmail(url: URL, env: Env, authorizedMailbox: string): Pr
     created_at: string
   }>()
 
-  return Response.json({
-    ...row,
-    headers: safeJsonParse(row.headers, {}),
-    metadata: safeJsonParse(row.metadata, {}),
-    has_attachments: Boolean(row.has_attachments),
-    attachment_count: row.attachment_count ?? 0,
-    attachments: attachments.results.map((attachment) => ({
-      ...attachment,
-      downloadable: Boolean(attachment.storage_key),
-    })),
-  })
+  return Response.json(
+    toDetailEmail(
+      row as unknown as Record<string, unknown>,
+      attachments.results as Record<string, unknown>[],
+    ),
+  )
 }
 
 async function handleSend(request: Request, env: Env, authorizedMailbox: string): Promise<Response> {
@@ -434,23 +438,83 @@ async function handleSync(url: URL, env: Env, authorizedMailbox: string): Promis
       'SELECT * FROM attachments WHERE email_id = ? ORDER BY mime_part_index ASC'
     ).bind(r.id).all()
 
-    emails.push({
-      ...r,
-      headers: safeJsonParse(r.headers as string, {}),
-      metadata: safeJsonParse(r.metadata as string, {}),
-      has_attachments: Boolean(r.has_attachments),
-      attachment_count: (r.attachment_count as number) ?? 0,
-      attachments: attachments.results.map((a: Record<string, unknown>) => ({
-        ...a,
-        downloadable: Boolean(a.storage_key),
-      })),
-    })
+    emails.push(toDetailEmail(r, attachments.results as Record<string, unknown>[]))
   }
 
   return Response.json({
     emails,
     total,
     has_more: offset + limit < total,
+  })
+}
+
+function toInboxEmail(row: Record<string, unknown>) {
+  return {
+    id: row.id as string,
+    mailbox: row.mailbox as string,
+    from_address: row.from_address as string,
+    from_name: (row.from_name as string) ?? '',
+    subject: (row.subject as string) ?? '',
+    code: resolveEmailCode(row),
+    direction: row.direction as string,
+    status: row.status as string,
+    received_at: row.received_at as string,
+    has_attachments: Boolean(row.has_attachments),
+    attachment_count: Number(row.attachment_count ?? 0),
+  }
+}
+
+function toDetailEmail(row: Record<string, unknown>, attachments: Record<string, unknown>[]) {
+  return {
+    id: row.id as string,
+    mailbox: row.mailbox as string,
+    from_address: row.from_address as string,
+    from_name: (row.from_name as string) ?? '',
+    to_address: row.to_address as string,
+    subject: (row.subject as string) ?? '',
+    body_text: (row.body_text as string) ?? '',
+    body_html: (row.body_html as string) ?? '',
+    code: resolveEmailCode(row),
+    headers: safeJsonParse(row.headers as string, {}),
+    metadata: safeJsonParse(row.metadata as string, {}),
+    direction: row.direction as string,
+    status: row.status as string,
+    message_id: (row.message_id as string) ?? null,
+    has_attachments: Boolean(row.has_attachments),
+    attachment_count: Number(row.attachment_count ?? 0),
+    attachment_names: (row.attachment_names as string) ?? '',
+    attachment_search_text: (row.attachment_search_text as string) ?? '',
+    raw_storage_key: (row.raw_storage_key as string) ?? null,
+    received_at: row.received_at as string,
+    created_at: row.created_at as string,
+    attachments: attachments.map(toAttachmentRecord),
+  }
+}
+
+function toAttachmentRecord(row: Record<string, unknown>) {
+  return {
+    id: row.id as string,
+    email_id: row.email_id as string,
+    filename: row.filename as string,
+    content_type: row.content_type as string,
+    size_bytes: row.size_bytes === null || row.size_bytes === undefined ? null : Number(row.size_bytes),
+    content_disposition: (row.content_disposition as string) ?? null,
+    content_id: (row.content_id as string) ?? null,
+    mime_part_index: Number(row.mime_part_index),
+    text_content: (row.text_content as string) ?? '',
+    text_extraction_status: row.text_extraction_status as string,
+    storage_key: (row.storage_key as string) ?? null,
+    downloadable: Boolean(row.storage_key),
+    created_at: row.created_at as string,
+  }
+}
+
+function resolveEmailCode(row: Record<string, unknown>): string | null {
+  return extractEmailCode({
+    subject: (row.subject as string) ?? '',
+    bodyText: (row.body_text as string) ?? '',
+    bodyHtml: (row.body_html as string) ?? '',
+    storedCode: (row.code as string | null) ?? null,
   })
 }
 

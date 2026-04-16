@@ -14,6 +14,8 @@ interface RemoteProviderOptions {
 export function createRemoteProvider(options: RemoteProviderOptions): StorageProvider {
   const { url, mailbox, apiKey, token } = options
   const useAuthApi = !!apiKey
+  const inboxPageSize = 100
+  const maxInboxPagesForIdResolution = 10
 
   async function apiFetch(path: string, params?: Record<string, string | number>): Promise<Response> {
     const endpoint = new URL(path, url)
@@ -41,6 +43,46 @@ export function createRemoteProvider(options: RemoteProviderOptions): StoragePro
       params.to = mailbox
     }
     return params
+  }
+
+  async function fetchEmailById(id: string): Promise<Email | null> {
+    const res = await apiFetch(emailPath(), { id })
+    if (!res.ok) {
+      if (res.status === 404) return null
+      const data = await res.json() as { error?: string }
+      throw new Error(`API error: ${data.error ?? res.statusText}`)
+    }
+    return await res.json() as Email
+  }
+
+  async function resolveEmailIdPrefix(prefix: string): Promise<string | null> {
+    let match: string | null = null
+
+    for (let page = 0; page < maxInboxPagesForIdResolution; page++) {
+      const res = await apiFetch(inboxPath(), withMailbox({
+        limit: inboxPageSize,
+        offset: page * inboxPageSize,
+      }))
+      if (!res.ok) {
+        const data = await res.json() as { error?: string }
+        throw new Error(`API error: ${data.error ?? res.statusText}`)
+      }
+
+      const data = await res.json() as { emails: Email[] }
+      const emails = data.emails ?? []
+
+      for (const email of emails) {
+        if (!email.id?.startsWith(prefix)) continue
+        if (match && match !== email.id) {
+          throw new Error(`Ambiguous email id: ${prefix}`)
+        }
+        match = email.id
+      }
+
+      if (emails.length < inboxPageSize) break
+    }
+
+    return match
   }
 
   return {
@@ -82,13 +124,13 @@ export function createRemoteProvider(options: RemoteProviderOptions): StoragePro
     },
 
     async getEmail(id) {
-      const res = await apiFetch(emailPath(), { id })
-      if (!res.ok) {
-        if (res.status === 404) return null
-        const data = await res.json() as { error?: string }
-        throw new Error(`API error: ${data.error ?? res.statusText}`)
-      }
-      return await res.json() as Email
+      const direct = await fetchEmailById(id)
+      if (direct || id.length >= 36) return direct
+
+      const resolvedId = await resolveEmailIdPrefix(id)
+      if (!resolvedId) return null
+
+      return await fetchEmailById(resolvedId)
     },
 
     async getAttachment(id): Promise<AttachmentDownload | null> {

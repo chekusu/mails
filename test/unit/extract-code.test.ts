@@ -14,6 +14,7 @@ describe('extractCode', () => {
     expect(extractCode('confirmation code: 998877')).toBe('998877')
     expect(extractCode('security code: 4455')).toBe('4455')
     expect(extractCode('Your OTP: 7890')).toBe('7890')
+    expect(extractCode('OTP Code:114669')).toBe('114669')
     expect(extractCode('passcode: 5678')).toBe('5678')
     expect(extractCode('pin code: 9012')).toBe('9012')
   })
@@ -39,6 +40,7 @@ describe('extractCode', () => {
   test('returns null when no code found', () => {
     expect(extractCode('Hello, this is a regular email')).toBeNull()
     expect(extractCode('')).toBeNull()
+    expect(extractCode('OTP Code')).toBeNull()
     expect(extractCode('Short 12')).toBeNull()
   })
 

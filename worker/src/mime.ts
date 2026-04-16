@@ -1,5 +1,6 @@
 import PostalMime, { type Attachment as PostalMimeAttachment } from 'postal-mime'
 import type { Attachment, AttachmentTextExtractionStatus } from '../../src/core/types.js'
+import { htmlToText } from './extract-code'
 
 const TEXT_EXTRACTION_LIMIT_BYTES = 10 * 1024 * 1024
 const TEXT_ATTACHMENT_TYPES = new Set([
@@ -31,11 +32,14 @@ export async function parseIncomingEmail(
   const attachments = parsed.attachments.map((attachment, index) =>
     toAttachmentRecord(attachment, emailId, index, createdAt)
   )
+  const rawBodyText = typeof parsed.text === 'string' ? parsed.text : ''
+  const bodyHtml = typeof parsed.html === 'string' ? parsed.html : ''
+  const bodyText = rawBodyText.trim().length > 0 ? rawBodyText : htmlToText(bodyHtml)
 
   return {
     subject: parsed.subject ?? '',
-    bodyText: parsed.text ?? '',
-    bodyHtml: parsed.html ?? '',
+    bodyText,
+    bodyHtml,
     headers: headersToRecord(parsed.headers),
     messageId: parsed.messageId ?? null,
     attachmentCount: attachments.length,

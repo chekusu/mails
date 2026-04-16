@@ -100,6 +100,26 @@ describe('worker: MIME parsing', () => {
     expect(parsed.attachments[0]!.text_extraction_status).toBe('unsupported')
     expect(parsed.attachments[0]!.text_content).toBe('')
   })
+
+  test('falls back to html content when text body is missing', async () => {
+    const raw = [
+      'Subject: OTP Code',
+      'Content-Type: text/html; charset="utf-8"',
+      '',
+      '<p>OTP Code:<strong>114669</strong></p>',
+      '',
+    ].join('\r\n')
+
+    const parsed = await parseIncomingEmail(
+      new TextEncoder().encode(raw).buffer,
+      'email-3',
+      '2026-03-18T00:00:00.000Z'
+    )
+
+    expect(parsed.bodyHtml).toContain('<strong>114669</strong>')
+    expect(parsed.bodyText).toContain('OTP Code:')
+    expect(parsed.bodyText).toContain('114669')
+  })
 })
 
 // --- POST /api/send tests ---
@@ -492,6 +512,67 @@ describe('worker: GET /api/inbox and /api/code', () => {
     expect(response.status).toBe(200)
     expect(capturedSql).toContain("subject LIKE ? ESCAPE '\\'")
     expect(capturedArgs[1]).toBe('%100\\%\\_done%')
+  })
+
+  test('recomputes inbox code from html-only body instead of stale stored code', async () => {
+    const db = {
+      prepare: mock(() => ({
+        bind: mock(() => ({
+          all: mock(() => Promise.resolve({
+            results: [
+              makeSyncEmail({
+                subject: 'OTP Code',
+                body_text: '',
+                body_html: '<p>OTP Code:<strong>114669</strong></p>',
+                code: 'Code',
+              }),
+            ],
+          })),
+        })),
+      })),
+    } as unknown as D1Database
+
+    const env = singleMailboxEnv('user@test.com', { DB: db })
+    const response = await worker.fetch(
+      authedRequest('http://localhost/api/inbox?to=user@test.com'),
+      env,
+    )
+    const json = await response.json() as { emails: Array<{ code: string | null }> }
+
+    expect(response.status).toBe(200)
+    expect(json.emails[0]!.code).toBe('114669')
+  })
+
+  test('recomputes polled code from html-only body when stored code is stale', async () => {
+    const db = {
+      prepare: mock(() => ({
+        bind: mock(() => ({
+          all: mock(() => Promise.resolve({
+            results: [
+              {
+                id: 'sync-e1',
+                from_address: 'sender@test.com',
+                subject: 'OTP Code',
+                body_text: '',
+                body_html: '<p>OTP Code:<strong>114669</strong></p>',
+                code: 'Code',
+                received_at: '2026-03-19T10:00:00Z',
+              },
+            ],
+          })),
+        })),
+      })),
+    } as unknown as D1Database
+
+    const env = singleMailboxEnv('user@test.com', { DB: db })
+    const response = await worker.fetch(
+      authedRequest('http://localhost/api/code?to=user@test.com&timeout=1'),
+      env,
+    )
+    const json = await response.json() as { code: string | null }
+
+    expect(response.status).toBe(200)
+    expect(json.code).toBe('114669')
   })
 
   test('rejects code polling for another mailbox', async () => {
