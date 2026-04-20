@@ -6,3 +6,17 @@ compatibility_date = "2024-12-01"
 binding = "DB"
 database_name = "mails"
 database_id = "REPLACE_WITH_YOUR_DATABASE_ID"
+
+# ---- Outbound email providers ----
+#
+# Default provider chain = "cloudflare,resend" (first one configured wins;
+# missing providers are silently skipped). Override with:
+#   wrangler secret put EMAIL_PROVIDERS   # e.g. "resend" or "cloudflare,resend"
+#
+# Provider: Resend — set the API key as a secret:
+#   wrangler secret put RESEND_API_KEY
+#
+# Provider: Cloudflare Email Service (private beta) — add a send_email binding:
+#   [[send_email]]
+#   name = "EMAIL"
+#   # destination_address = "allowed@example.com"  # optional allowlist

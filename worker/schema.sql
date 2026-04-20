@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS emails (
   raw_storage_key TEXT,
   direction TEXT NOT NULL CHECK (direction IN ('inbound', 'outbound')),
   status TEXT DEFAULT 'received' CHECK (status IN ('received', 'sent', 'failed', 'queued')),
+  provider TEXT,
   received_at TEXT NOT NULL,
   created_at TEXT NOT NULL
 );

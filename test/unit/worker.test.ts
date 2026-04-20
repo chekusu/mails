@@ -178,11 +178,12 @@ describe('worker: POST /api/send', () => {
     })
 
     const response = await worker.fetch(request, env)
-    const json = await response.json() as { id: string; from: string }
+    const json = await response.json() as { id: string; from: string; provider: string }
 
     expect(response.status).toBe(200)
     expect(json.id).toBe('resend-id-123')
     expect(json.from).toBe('me@example.com')
+    expect(json.provider).toBe('resend')
 
     // Verify Resend API was called correctly
     expect(fetchMock).toHaveBeenCalledTimes(1)
@@ -200,7 +201,6 @@ describe('worker: POST /api/send', () => {
     expect(prepareMock).toHaveBeenCalledTimes(1)
     expect(bindMock).toHaveBeenCalledTimes(1)
     const boundArgs = (bindMock as any).mock.calls[0]
-    // id, mailbox, from_address, from_name, to_address, subject, text, html, has_attachments, attachment_count, received_at, created_at
     expect(boundArgs[0]).toBe('resend-id-123') // id
     expect(boundArgs[1]).toBe('me@example.com') // mailbox
     expect(boundArgs[2]).toBe('me@example.com') // from_address
@@ -211,6 +211,7 @@ describe('worker: POST /api/send', () => {
     expect(boundArgs[7]).toBe('') // body_html
     expect(boundArgs[8]).toBe(0) // has_attachments
     expect(boundArgs[9]).toBe(0) // attachment_count
+    expect(boundArgs[10]).toBe('resend') // provider
   })
 
   test('returns 400 for missing fields', async () => {
@@ -247,9 +248,9 @@ describe('worker: POST /api/send', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  test('returns 500 when RESEND_API_KEY not configured', async () => {
+  test('returns 503 when no provider configured', async () => {
     const { db } = createMockD1()
-    const env = singleMailboxEnv('me@example.com', { DB: db }) // no RESEND_API_KEY
+    const env = singleMailboxEnv('me@example.com', { DB: db }) // no RESEND_API_KEY, no EMAIL binding
 
     const request = authedRequest('http://localhost/api/send', {
       method: 'POST',
@@ -260,8 +261,8 @@ describe('worker: POST /api/send', () => {
     const response = await worker.fetch(request, env)
     const json = await response.json() as { error: string }
 
-    expect(response.status).toBe(500)
-    expect(json.error).toContain('RESEND_API_KEY')
+    expect(response.status).toBe(503)
+    expect(json.error).toContain('No email provider configured')
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -353,7 +354,7 @@ describe('worker: POST /api/send', () => {
     expect(boundArgs[9]).toBe(2) // attachment_count
   })
 
-  test('returns Resend error on failure', async () => {
+  test('returns 502 when all providers fail', async () => {
     const { db } = createMockD1()
     const env = singleMailboxEnv('me@example.com', { DB: db, RESEND_API_KEY: 're_test_key' })
 
@@ -368,10 +369,116 @@ describe('worker: POST /api/send', () => {
     })
 
     const response = await worker.fetch(request, env)
+    const json = await response.json() as { error: string; attempts: Array<{ provider: string; error: string }> }
+
+    expect(response.status).toBe(502)
+    expect(json.error).toContain('All providers failed')
+    expect(json.attempts[0]?.provider).toBe('resend')
+    expect(json.attempts[0]?.error).toContain('Invalid API key')
+  })
+
+  test('sends via Cloudflare EMAIL binding when configured', async () => {
+    const { db, bindMock } = createMockD1()
+    const emailSend = mock(() => Promise.resolve({ id: 'cf-id-42' }))
+    const env = singleMailboxEnv('me@example.com', {
+      DB: db,
+      EMAIL: { send: emailSend } as any,
+    })
+
+    const request = authedRequest('http://localhost/api/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(SEND_BODY),
+    })
+
+    const response = await worker.fetch(request, env)
+    const json = await response.json() as { id: string; provider: string }
+
+    expect(response.status).toBe(200)
+    expect(json.id).toBe('cf-id-42')
+    expect(json.provider).toBe('cloudflare')
+    expect(emailSend).toHaveBeenCalledTimes(1)
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    const boundArgs = (bindMock as any).mock.calls[0]
+    expect(boundArgs[10]).toBe('cloudflare')
+  })
+
+  test('falls back from Cloudflare to Resend when attachments present', async () => {
+    const { db } = createMockD1()
+    const emailSend = mock(() => Promise.resolve({ id: 'cf-id' }))
+    const env = singleMailboxEnv('me@example.com', {
+      DB: db,
+      EMAIL: { send: emailSend } as any,
+      RESEND_API_KEY: 're_test_key',
+    })
+
+    const request = authedRequest('http://localhost/api/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...SEND_BODY,
+        attachments: [{ filename: 'r.pdf', content: 'base64data' }],
+      }),
+    })
+
+    const response = await worker.fetch(request, env)
+    const json = await response.json() as { provider: string }
+
+    expect(response.status).toBe(200)
+    expect(json.provider).toBe('resend')
+    expect(emailSend).not.toHaveBeenCalled()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  test('rejects attachments when only Cloudflare configured', async () => {
+    const { db } = createMockD1()
+    const emailSend = mock(() => Promise.resolve({ id: 'cf-id' }))
+    const env = singleMailboxEnv('me@example.com', {
+      DB: db,
+      EMAIL: { send: emailSend } as any,
+    })
+
+    const request = authedRequest('http://localhost/api/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...SEND_BODY,
+        attachments: [{ filename: 'r.pdf', content: 'base64data' }],
+      }),
+    })
+
+    const response = await worker.fetch(request, env)
     const json = await response.json() as { error: string }
 
-    expect(response.status).toBe(403)
-    expect(json.error).toBe('Invalid API key')
+    expect(response.status).toBe(400)
+    expect(json.error).toContain('supports the request')
+    expect(emailSend).not.toHaveBeenCalled()
+  })
+
+  test('EMAIL_PROVIDERS=resend forces Resend even with EMAIL binding', async () => {
+    const { db } = createMockD1()
+    const emailSend = mock(() => Promise.resolve({ id: 'cf-id' }))
+    const env = singleMailboxEnv('me@example.com', {
+      DB: db,
+      EMAIL: { send: emailSend } as any,
+      RESEND_API_KEY: 're_test_key',
+      EMAIL_PROVIDERS: 'resend',
+    })
+
+    const request = authedRequest('http://localhost/api/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(SEND_BODY),
+    })
+
+    const response = await worker.fetch(request, env)
+    const json = await response.json() as { provider: string }
+
+    expect(response.status).toBe(200)
+    expect(json.provider).toBe('resend')
+    expect(emailSend).not.toHaveBeenCalled()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   test('returns 405 for non-POST methods', async () => {

@@ -1,5 +1,13 @@
 import { extractEmailCode } from './extract-code'
 import { parseIncomingEmail } from './mime'
+import {
+  AllProvidersFailedError,
+  UnsupportedFeatureError,
+  buildProviderChain,
+  sendWithChain,
+  type CloudflareEmailBinding,
+  type SendRequest,
+} from './providers'
 
 export interface Env {
   DB: D1Database
@@ -11,6 +19,14 @@ export interface Env {
   AUTH_TOKENS_JSON?: string
   /** Resend API key for outbound email sending. */
   RESEND_API_KEY?: string
+  /** Cloudflare Email Service binding (private beta). */
+  EMAIL?: CloudflareEmailBinding
+  /**
+   * Ordered provider preference list, e.g. "cloudflare,resend".
+   * Defaults to "cloudflare,resend"; providers lacking configuration are
+   * silently skipped so existing Resend-only deployments continue to work.
+   */
+  EMAIL_PROVIDERS?: string
 }
 
 export default {
@@ -212,7 +228,7 @@ async function handleInbox(url: URL, env: Env, authorizedMailbox: string): Promi
 
   let sql = `
     SELECT id, mailbox, from_address, from_name, subject, body_text, body_html, code,
-           direction, status, received_at, has_attachments, attachment_count
+           direction, status, provider, received_at, has_attachments, attachment_count
     FROM emails WHERE mailbox = ?`
   const params: (string | number)[] = [authorizedMailbox]
 
@@ -255,6 +271,7 @@ async function handleGetEmail(url: URL, env: Env, authorizedMailbox: string): Pr
     metadata: string
     direction: 'inbound' | 'outbound'
     status: 'received' | 'sent' | 'failed' | 'queued'
+    provider: string | null
     message_id: string | null
     has_attachments: number
     attachment_count: number
@@ -281,6 +298,7 @@ async function handleGetEmail(url: URL, env: Env, authorizedMailbox: string): Pr
       metadata: string
       direction: 'inbound' | 'outbound'
       status: 'received' | 'sent' | 'failed' | 'queued'
+      provider: string | null
       message_id: string | null
       has_attachments: number
       attachment_count: number
@@ -326,8 +344,9 @@ async function handleGetEmail(url: URL, env: Env, authorizedMailbox: string): Pr
 }
 
 async function handleSend(request: Request, env: Env, authorizedMailbox: string): Promise<Response> {
-  if (!env.RESEND_API_KEY) {
-    return Response.json({ error: 'RESEND_API_KEY not configured' }, { status: 500 })
+  const chain = buildProviderChain(env)
+  if (chain.length === 0) {
+    return Response.json({ error: 'No email provider configured' }, { status: 503 })
   }
 
   const body = await request.json() as {
@@ -337,6 +356,8 @@ async function handleSend(request: Request, env: Env, authorizedMailbox: string)
     text?: string
     html?: string
     reply_to?: string
+    cc?: string[]
+    bcc?: string[]
     attachments?: Array<{ filename: string; content: string; content_type?: string }>
   }
 
@@ -352,57 +373,49 @@ async function handleSend(request: Request, env: Env, authorizedMailbox: string)
     return Response.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  // Call Resend API
-  const resendBody: Record<string, unknown> = {
+  const sendReq: SendRequest = {
     from: body.from,
     to: body.to,
     subject: body.subject,
-  }
-  if (body.text) resendBody.text = body.text
-  if (body.html) resendBody.html = body.html
-  if (body.reply_to) resendBody.reply_to = body.reply_to
-  if (body.attachments?.length) {
-    resendBody.attachments = body.attachments.map(a => ({
-      filename: a.filename,
-      content: a.content,
-      ...(a.content_type ? { content_type: a.content_type } : {}),
-    }))
+    text: body.text,
+    html: body.html,
+    reply_to: body.reply_to,
+    cc: body.cc,
+    bcc: body.bcc,
+    attachments: body.attachments,
   }
 
-  const res = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${env.RESEND_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(resendBody),
-  })
-
-  const data = await res.json() as { id?: string; message?: string }
-  if (!res.ok) {
-    return Response.json({ error: data.message ?? 'Resend error' }, { status: res.status })
+  let result: { id: string; provider: 'cloudflare' | 'resend' }
+  try {
+    result = await sendWithChain(chain, sendReq)
+  } catch (err) {
+    if (err instanceof UnsupportedFeatureError) {
+      return Response.json({ error: err.message }, { status: 400 })
+    }
+    if (err instanceof AllProvidersFailedError) {
+      return Response.json({ error: err.message, attempts: err.attempts }, { status: 502 })
+    }
+    throw err
   }
 
-  // Record outbound in D1
-  const id = data.id ?? crypto.randomUUID()
   const now = new Date().toISOString()
-
   await env.DB.prepare(`
     INSERT INTO emails (
       id, mailbox, from_address, from_name, to_address, subject,
       body_text, body_html, code, headers, metadata, message_id,
       has_attachments, attachment_count, attachment_names, attachment_search_text,
-      raw_storage_key, direction, status, received_at, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, '{}', '{}', NULL, ?, ?, '', '', NULL, 'outbound', 'sent', ?, ?)
+      raw_storage_key, direction, status, provider, received_at, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, '{}', '{}', NULL, ?, ?, '', '', NULL, 'outbound', 'sent', ?, ?, ?)
   `).bind(
-    id, authorizedMailbox, senderMailbox, parseFromName(body.from), body.to.join(', '), body.subject,
+    result.id, authorizedMailbox, senderMailbox, parseFromName(body.from),
+    body.to.join(', '), body.subject,
     (body.text ?? '').slice(0, 50000), (body.html ?? '').slice(0, 100000),
     body.attachments?.length ? 1 : 0,
     body.attachments?.length ?? 0,
-    now, now,
+    result.provider, now, now,
   ).run()
 
-  return Response.json({ id, from: body.from })
+  return Response.json({ id: result.id, from: body.from, provider: result.provider })
 }
 
 async function handleSync(url: URL, env: Env, authorizedMailbox: string): Promise<Response> {
@@ -458,6 +471,7 @@ function toInboxEmail(row: Record<string, unknown>) {
     code: resolveEmailCode(row),
     direction: row.direction as string,
     status: row.status as string,
+    provider: (row.provider as string | null) ?? null,
     received_at: row.received_at as string,
     has_attachments: Boolean(row.has_attachments),
     attachment_count: Number(row.attachment_count ?? 0),
@@ -479,6 +493,7 @@ function toDetailEmail(row: Record<string, unknown>, attachments: Record<string,
     metadata: safeJsonParse(row.metadata as string, {}),
     direction: row.direction as string,
     status: row.status as string,
+    provider: (row.provider as string | null) ?? null,
     message_id: (row.message_id as string) ?? null,
     has_attachments: Boolean(row.has_attachments),
     attachment_count: Number(row.attachment_count ?? 0),
