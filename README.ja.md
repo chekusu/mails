@@ -91,7 +91,15 @@ Resendキー不要 — ホスティングユーザーは月100通無料。無制
 
 ```bash
 cd worker && wrangler deploy             # 独自Workerをデプロイ
-wrangler secret put RESEND_API_KEY       # WorkerにResendキーを設定（送信用）
+# 送信プロバイダを最低1つ設定：
+wrangler secret put RESEND_API_KEY       # オプションA：Resend
+#   オプションB：Cloudflare Email Service（プライベートベータ）— wrangler.toml に追加：
+#   [[send_email]]
+#   name = "EMAIL"
+# 両方設定時、デフォルトの優先順位は cloudflare → resend。
+# 順序の強制 / 片方無効化：
+#   wrangler secret put EMAIL_PROVIDERS   # 例: "resend" または "cloudflare,resend"
+#
 # 単一メールボックス:
 #   MAILBOX=agent@yourdomain.com
 #   AUTH_TOKEN=YOUR_MAILBOX_TOKEN
@@ -254,7 +262,7 @@ wrangler deploy
 | `GET /api/inbox?to=<addr>&query=<text>` | メール検索 |
 | `GET /api/code?to=<addr>&timeout=30` | 認証コードのロングポーリング |
 | `GET /api/email?id=<id>` | メール詳細（添付ファイル含む） |
-| `POST /api/send` | Resend経由でメール送信（RESEND_API_KEYが必要） |
+| `POST /api/send` | プロバイダチェーン経由でメール送信（Cloudflare Email Service、Resend） |
 | `GET /api/sync?to=<addr>&since=<iso>` | 増分メール同期（添付ファイル含む） |
 | `GET /health` | ヘルスチェック（常に公開） |
 

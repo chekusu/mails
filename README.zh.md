@@ -91,7 +91,15 @@ mails code --to myagent@mails.dev    # 等待验证码
 
 ```bash
 cd worker && wrangler deploy             # 部署你自己的 Worker
-wrangler secret put RESEND_API_KEY       # 在 Worker 上设置 Resend 密钥（用于发送）
+# 至少配置一个发送 provider：
+wrangler secret put RESEND_API_KEY       # 选项 A：Resend
+#   选项 B：Cloudflare Email Service（私有 beta）— 在 wrangler.toml 中添加：
+#   [[send_email]]
+#   name = "EMAIL"
+# 同时配置时，默认链顺序 cloudflare → resend。
+# 强制指定顺序 / 禁用某个：
+#   wrangler secret put EMAIL_PROVIDERS   # 例如 "resend" 或 "cloudflare,resend"
+#
 # 单邮箱：
 #   MAILBOX=agent@yourdomain.com
 #   AUTH_TOKEN=YOUR_MAILBOX_TOKEN
@@ -254,7 +262,7 @@ wrangler deploy
 | `GET /api/inbox?to=<addr>&query=<text>` | 搜索邮件 |
 | `GET /api/code?to=<addr>&timeout=30` | 长轮询等待验证码 |
 | `GET /api/email?id=<id>` | 邮件详情（含附件） |
-| `POST /api/send` | 通过 Resend 发送邮件（需要 RESEND_API_KEY） |
+| `POST /api/send` | 通过 provider 链发送邮件（Cloudflare Email Service、Resend） |
 | `GET /api/sync?to=<addr>&since=<iso>` | 增量邮件同步（含附件） |
 | `GET /health` | 健康检查（始终公开） |
 

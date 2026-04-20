@@ -91,7 +91,15 @@ No Resend key needed — hosted users get 100 free sends/month. For unlimited se
 
 ```bash
 cd worker && wrangler deploy             # Deploy your own Worker
-wrangler secret put RESEND_API_KEY       # Set Resend key on Worker (for sending)
+# Choose at least one outbound provider:
+wrangler secret put RESEND_API_KEY       # Option A: Resend
+#   Option B: Cloudflare Email Service (private beta) — add to wrangler.toml:
+#   [[send_email]]
+#   name = "EMAIL"
+# Both can be configured; default chain tries cloudflare → resend.
+# Force order / disable one via:
+#   wrangler secret put EMAIL_PROVIDERS   # e.g. "resend" or "cloudflare,resend"
+#
 # Single mailbox:
 #   MAILBOX=agent@yourdomain.com
 #   AUTH_TOKEN=YOUR_MAILBOX_TOKEN
@@ -254,7 +262,7 @@ All `/api/*` endpoints require `Authorization: Bearer <mailbox-token>`. The toke
 | `GET /api/inbox?to=<addr>&query=<text>` | Search emails |
 | `GET /api/code?to=<addr>&timeout=30` | Long-poll for verification code |
 | `GET /api/email?id=<id>` | Get email by ID (with attachments) |
-| `POST /api/send` | Send email via Resend (requires RESEND_API_KEY) |
+| `POST /api/send` | Send email via configured provider chain (Cloudflare Email Service, Resend) |
 | `GET /api/sync?to=<addr>&since=<iso>` | Incremental email sync (with attachments) |
 | `GET /health` | Health check (always public) |
 
