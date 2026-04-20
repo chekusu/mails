@@ -5,5 +5,8 @@ dist/
 .env.local
 .DS_Store
 test/.test-*
+test/.oss-sync-test.db*
+escape.txt
+docs/bugs-*.md
 worker/.wrangler/
 deploy/
