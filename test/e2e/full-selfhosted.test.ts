@@ -24,8 +24,13 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY
 const OSS_WORKER_URL = process.env.OSS_WORKER_URL || 'https://mails-oss-test.o-u-turing.workers.dev'
 const OSS_WORKER_TOKEN = process.env.OSS_WORKER_TOKEN || ''
 const OSS_MAILBOX = process.env.OSS_MAILBOX || 'e2e@test.mails.dev'
+// Send identity (must match a Resend-verified domain). Scoped under
+// AUTH_TOKENS_JSON on the test worker with its own OSS_SEND_TOKEN.
+const OSS_SEND_MAILBOX = process.env.OSS_SEND_MAILBOX || 'noreply@kimeeru.com'
+const OSS_SEND_TOKEN = process.env.OSS_SEND_TOKEN || ''
 
 const skip = !RESEND_API_KEY || !OSS_WORKER_TOKEN
+const skipSend = skip || !OSS_SEND_TOKEN
 
 const VERIFICATION_CODE = String(Math.floor(100000 + Math.random() * 900000))
 
@@ -155,15 +160,15 @@ describe.skipIf(skip)('Full E2E: self-hosted OSS worker', () => {
     console.log(`  Pagination: page1=${page1.length}, page2=${page2.length}`)
   })
 
-  test('9. send email via OSS Worker /api/send', async () => {
+  test.skipIf(skipSend)('9. send email via OSS Worker /api/send (provider=resend)', async () => {
     const res = await fetch(`${OSS_WORKER_URL}/api/send`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${OSS_WORKER_TOKEN}`,
+        'Authorization': `Bearer ${OSS_SEND_TOKEN}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from: `mails oss-e2e <noreply@kimeeru.com>`,
+        from: OSS_SEND_MAILBOX,
         to: ['o.u.turing@gmail.com'],
         subject: `[oss-send-e2e] ${VERIFICATION_CODE}`,
         text: `Sent via OSS /api/send. Code: ${VERIFICATION_CODE}`,
@@ -173,25 +178,73 @@ describe.skipIf(skip)('Full E2E: self-hosted OSS worker', () => {
     const data = await res.json() as { id?: string; provider?: string; error?: string }
     expect(res.ok).toBe(true)
     expect(data.id).toBeTruthy()
-    expect(data.provider).toBeTruthy()
+    expect(data.provider).toBe('resend')
     console.log(`  Sent via /api/send: ${data.id} (provider=${data.provider})`)
   })
 
-  test('10. outbound email appears in inbox after /api/send', async () => {
-    // The send in test 9 recorded outbound in D1
-    // mailbox = body.from (full "Name <email>" string)
-    const outboundMailbox = 'mails oss-e2e <noreply@kimeeru.com>'
-    const provider = createRemoteProvider({
-      url: OSS_WORKER_URL,
-      mailbox: outboundMailbox,
-      token: OSS_WORKER_TOKEN || undefined,
-    })
+  test.skipIf(skipSend)('10. outbound D1 row persists provider field', async () => {
+    const res = await fetch(
+      `${OSS_WORKER_URL}/api/inbox?to=${encodeURIComponent(OSS_SEND_MAILBOX)}&direction=outbound&limit=1`,
+      { headers: { Authorization: `Bearer ${OSS_SEND_TOKEN}` } },
+    )
+    expect(res.ok).toBe(true)
+    const data = await res.json() as { emails: Array<{ id: string; direction: string; status: string; provider?: string | null; subject: string }> }
+    expect(data.emails.length).toBeGreaterThanOrEqual(1)
+    const latest = data.emails[0]!
+    expect(latest.direction).toBe('outbound')
+    expect(latest.status).toBe('sent')
+    expect(latest.provider).toBe('resend')
+    console.log(`  Outbound row: ${latest.id.slice(0, 8)} provider=${latest.provider}`)
+  })
 
-    const outbound = await provider.getEmails(outboundMailbox, { direction: 'outbound' })
-    expect(outbound.length).toBeGreaterThanOrEqual(1)
-    expect(outbound[0]!.direction).toBe('outbound')
-    expect(outbound[0]!.status).toBe('sent')
-    console.log(`  Outbound emails: ${outbound.length}`)
+  test.skipIf(skipSend)('12. /api/send with attachment routes to Resend (skips CF)', async () => {
+    const content = Buffer.from(`note-${VERIFICATION_CODE}`).toString('base64')
+    const res = await fetch(`${OSS_WORKER_URL}/api/send`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OSS_SEND_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: OSS_SEND_MAILBOX,
+        to: ['o.u.turing@gmail.com'],
+        subject: `[oss-send-e2e attach] ${VERIFICATION_CODE}`,
+        text: `With attachment. Code: ${VERIFICATION_CODE}`,
+        attachments: [{ filename: 'note.txt', content, content_type: 'text/plain' }],
+      }),
+    })
+    const data = await res.json() as { id?: string; provider?: string; error?: string }
+    expect(res.ok).toBe(true)
+    expect(data.provider).toBe('resend')
+
+    // Confirm D1 recorded the attachment count via the outbound row.
+    const inboxRes = await fetch(
+      `${OSS_WORKER_URL}/api/inbox?to=${encodeURIComponent(OSS_SEND_MAILBOX)}&direction=outbound&limit=1`,
+      { headers: { Authorization: `Bearer ${OSS_SEND_TOKEN}` } },
+    )
+    const inbox = await inboxRes.json() as { emails: Array<{ id: string; has_attachments: boolean; attachment_count: number; provider?: string | null }> }
+    const latest = inbox.emails[0]!
+    expect(latest.has_attachments).toBe(true)
+    expect(latest.attachment_count).toBe(1)
+    expect(latest.provider).toBe('resend')
+    console.log(`  Attachment send: ${data.id} (attachments=${latest.attachment_count}, provider=${latest.provider})`)
+  })
+
+  test.skipIf(skipSend)('13. /api/send with mismatched from returns 403', async () => {
+    const res = await fetch(`${OSS_WORKER_URL}/api/send`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OSS_SEND_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: 'intruder@other.com',
+        to: ['o.u.turing@gmail.com'],
+        subject: 'x',
+        text: 'x',
+      }),
+    })
+    expect(res.status).toBe(403)
   })
 
   test('11. sync emails from Worker to local sqlite', async () => {
