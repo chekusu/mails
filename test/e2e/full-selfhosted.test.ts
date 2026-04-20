@@ -170,10 +170,11 @@ describe.skipIf(skip)('Full E2E: self-hosted OSS worker', () => {
       }),
     })
 
-    const data = await res.json() as { id?: string; error?: string }
+    const data = await res.json() as { id?: string; provider?: string; error?: string }
     expect(res.ok).toBe(true)
     expect(data.id).toBeTruthy()
-    console.log(`  Sent via /api/send: ${data.id}`)
+    expect(data.provider).toBeTruthy()
+    console.log(`  Sent via /api/send: ${data.id} (provider=${data.provider})`)
   })
 
   test('10. outbound email appears in inbox after /api/send', async () => {

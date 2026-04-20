@@ -52,6 +52,7 @@ export interface Email {
   metadata: Record<string, unknown>
   direction: 'inbound' | 'outbound'
   status: 'received' | 'sent' | 'failed' | 'queued'
+  provider?: string | null
   message_id?: string | null
   has_attachments?: boolean
   attachment_count?: number

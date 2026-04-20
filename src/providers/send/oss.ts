@@ -29,10 +29,10 @@ export function createOSSSendProvider(workerUrl: string, token?: string): SendPr
         body: JSON.stringify(body),
       })
 
-      const data = await res.json() as { id?: string; error?: string }
+      const data = await res.json() as { id?: string; provider?: string; error?: string }
       if (!res.ok) throw new Error(`OSS send error (${res.status}): ${data.error ?? res.statusText}`)
 
-      return { id: data.id!, provider: 'oss' }
+      return { id: data.id!, provider: data.provider ?? 'oss' }
     },
   }
 }

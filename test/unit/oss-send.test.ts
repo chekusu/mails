@@ -27,7 +27,7 @@ describe('OSS send provider', () => {
     })
 
     expect(result.id).toBe('oss_1')
-    expect(result.provider).toBe('oss')
+    expect(result.provider).toBe('oss') // worker didn't report provider — falls back to 'oss'
     expect(requestUrl).toBe('https://my-worker.example.com/api/send')
     expect(requestBody.from).toBe('bot@example.com')
     expect(requestBody.to).toEqual(['user@example.com'])
@@ -132,5 +132,14 @@ describe('OSS send provider', () => {
     await provider.send({ from: 'a@b.com', to: ['c@d.com'], subject: 'R', text: 'x', replyTo: 'reply@test.com' })
 
     expect(requestBody.reply_to).toBe('reply@test.com')
+  })
+
+  test('propagates worker-reported provider (cloudflare/resend)', async () => {
+    globalThis.fetch = mock(async () =>
+      new Response(JSON.stringify({ id: 'w_cf', provider: 'cloudflare' })),
+    ) as typeof fetch
+    const provider = createOSSSendProvider('https://worker.example.com', 'tok')
+    const result = await provider.send({ from: 'a@b.com', to: ['c@d.com'], subject: 'S', text: 'x' })
+    expect(result.provider).toBe('cloudflare')
   })
 })
