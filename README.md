@@ -17,16 +17,18 @@ Email infrastructure for AI agents. Send and receive emails programmatically.
     |  mails send --to user@example.com                 |  email to agent@mails.dev
     |                                                   |
     v                                                   v
-+--------+         +----------+              +-------------------+
-|  CLI   |-------->|  Resend  |              | Cloudflare Email  |
-|  /SDK  |         |  (ext.)  |              |     Routing       |
-+--------+         +----------+              +-------------------+
-    |                    ^                              |
-    |  /v1/send          |  send API                    |  email() handler
-    |  /api/send         |                              |
-    v                    |                              v
++--------+                                    +-------------------+
+|  CLI   |                                    | Cloudflare Email  |
+|  /SDK  |                                    |     Routing       |
++--------+                                    +-------------------+
+    |                                                   |
+    |  /v1/send                                         |  email() handler
+    |  /api/send                                        |
+    v                                                   v
 +-----------------------------------------------------------+
 |                       Worker                              |
+|                                                           |
+|  provider chain:  Cloudflare Email Service → Resend       |
 |                                                           |
 |  mails.dev (hosted)        or     your own (self-hosted)  |
 |  +-----------------------------------------+              |
@@ -53,13 +55,14 @@ Email infrastructure for AI agents. Send and receive emails programmatically.
 
 ## Features
 
-- **Send emails** via Resend with attachment support
+- **Send emails** via a provider chain — Cloudflare Email Service (native `env.EMAIL.send()` binding, public beta) with Resend as fallback; default order is `cloudflare,resend`, override with `EMAIL_PROVIDERS`
 - **Receive emails** via Cloudflare Email Routing Worker
 - **Search inbox** — keyword search across subject, body, sender, code
 - **Verification code extraction** — auto-extracts codes from emails (EN/ZH/JA/KO)
 - **Attachments** — send files via CLI (`--attach`) or SDK, receive and parse MIME attachments
 - **Storage providers** — local SQLite, [db9.ai](https://db9.ai) cloud PostgreSQL, or remote Worker API
-- **Zero runtime dependencies** — Resend provider uses raw `fetch()`
+- **Provider transparency** — `/api/send` response and `/api/inbox` outbound rows carry a `provider` field (`cloudflare`/`resend`) so you can see which backend actually delivered
+- **Zero runtime dependencies** — both providers call the Workers binding or raw `fetch()` directly, no SDK
 - **Hosted service** — free `@mails.dev` mailboxes via `mails claim`
 - **Self-hosted** — deploy your own Worker with mailbox-scoped auth tokens
 

@@ -17,16 +17,18 @@ AIエージェント向けのメールインフラ。プログラムでメール
     |  mails send --to user@example.com                 |  agent@mails.dev にメール送信
     |                                                   |
     v                                                   v
-+--------+         +----------+              +-------------------+
-|  CLI   |-------->|  Resend  |              | Cloudflare Email  |
-|  /SDK  |         | （外部）  |              |     Routing       |
-+--------+         +----------+              +-------------------+
-    |                    ^                              |
-    |  /v1/send          |  送信 API                    |  email() handler
-    |  /api/send         |                              |
-    v                    |                              v
++--------+                                    +-------------------+
+|  CLI   |                                    | Cloudflare Email  |
+|  /SDK  |                                    |     Routing       |
++--------+                                    +-------------------+
+    |                                                   |
+    |  /v1/send                                         |  email() handler
+    |  /api/send                                        |
+    v                                                   v
 +-----------------------------------------------------------+
 |                       Worker                              |
+|                                                           |
+|  provider チェーン：Cloudflare Email Service → Resend     |
 |                                                           |
 |  mails.dev（ホスティング）    or   自前デプロイ              |
 |  +-----------------------------------------+              |
@@ -53,13 +55,14 @@ AIエージェント向けのメールインフラ。プログラムでメール
 
 ## 特徴
 
-- **メール送信** — Resend経由、添付ファイル対応
+- **メール送信** — プロバイダチェーン：Cloudflare Email Service（ネイティブ `env.EMAIL.send()` バインディング、パブリックベータ）と Resend のフォールバック。デフォルト順序 `cloudflare,resend`、`EMAIL_PROVIDERS` で上書き可能
 - **メール受信** — Cloudflare Email Routing Worker経由
 - **受信箱検索** — キーワードで件名、本文、送信者、認証コードを検索
 - **認証コード自動抽出** — メールから認証コードを自動検出（英/中/日/韓対応）
 - **添付ファイル** — CLIの `--attach` またはSDKで送信、MIME添付ファイルの受信・解析
 - **ストレージプロバイダー** — ローカルSQLite、[db9.ai](https://db9.ai)クラウドPostgreSQL、またはリモートWorker API
-- **ゼロランタイム依存** — Resend providerは `fetch()` のみ使用
+- **プロバイダ可視化** — `/api/send` レスポンスと `/api/inbox` の outbound 行に `provider` フィールド（`cloudflare`/`resend`）が含まれ、実際にどちらが配信したか確認できる
+- **ゼロランタイム依存** — プロバイダは全て Workers バインディングまたは `fetch()` を直接使用、SDK なし
 - **ホスティングサービス** — `mails claim` で無料 `@mails.dev` メールアドレス取得
 - **セルフホスト** — 独自Workerデプロイ、メールボックス単位の token 認証
 

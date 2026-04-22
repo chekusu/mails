@@ -17,16 +17,18 @@
     |  mails send --to user@example.com                 |  发送邮件到 agent@mails.dev
     |                                                   |
     v                                                   v
-+--------+         +----------+              +-------------------+
-|  CLI   |-------->|  Resend  |              | Cloudflare Email  |
-|  /SDK  |         | （外部）  |              |     Routing       |
-+--------+         +----------+              +-------------------+
-    |                    ^                              |
-    |  /v1/send          |  发送 API                    |  email() handler
-    |  /api/send         |                              |
-    v                    |                              v
++--------+                                    +-------------------+
+|  CLI   |                                    | Cloudflare Email  |
+|  /SDK  |                                    |     Routing       |
++--------+                                    +-------------------+
+    |                                                   |
+    |  /v1/send                                         |  email() handler
+    |  /api/send                                        |
+    v                                                   v
 +-----------------------------------------------------------+
 |                       Worker                              |
+|                                                           |
+|  provider 链：Cloudflare Email Service → Resend           |
 |                                                           |
 |  mails.dev（托管）            或      自己部署（自部署）     |
 |  +-----------------------------------------+              |
@@ -53,13 +55,14 @@
 
 ## 特性
 
-- **发送邮件** — 通过 Resend，支持附件
+- **发送邮件** — 多 provider 链：Cloudflare Email Service（原生 `env.EMAIL.send()` binding，公开 beta）与 Resend 互为兜底，默认顺序 `cloudflare,resend`，通过 `EMAIL_PROVIDERS` 覆盖
 - **接收邮件** — 通过 Cloudflare Email Routing Worker
 - **搜索收件箱** — 按关键词搜索主题、正文、发件人、验证码
 - **验证码自动提取** — 自动从邮件中提取验证码（支持中/英/日/韩）
 - **附件** — CLI `--attach` 或 SDK 发送，Worker 自动解析 MIME 附件
 - **存储 Provider** — 本地 SQLite、[db9.ai](https://db9.ai) 云端 PostgreSQL、或远程 Worker API
-- **零运行时依赖** — Resend provider 仅使用原生 `fetch()`
+- **Provider 可见性** — `/api/send` 响应与 `/api/inbox` 的 outbound 行携带 `provider` 字段（`cloudflare`/`resend`），知道是谁真正投递的
+- **零运行时依赖** — provider 全部走 Workers binding 或原生 `fetch()`，不引 SDK
 - **托管服务** — 通过 `mails claim` 免费获取 `@mails.dev` 邮箱
 - **自部署** — 部署自己的 Worker，并使用 mailbox 级 token 鉴权
 
