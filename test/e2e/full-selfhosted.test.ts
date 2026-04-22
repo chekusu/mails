@@ -247,6 +247,61 @@ describe.skipIf(skip)('Full E2E: self-hosted OSS worker', () => {
     expect(res.status).toBe(403)
   })
 
+  test.skipIf(skipSend)('14. /api/send downstream failure surfaces 502 + attempts', async () => {
+    // Resend rejects malformed recipient addresses, letting us exercise the
+    // AllProvidersFailedError aggregation without reconfiguring the worker.
+    const res = await fetch(`${OSS_WORKER_URL}/api/send`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${OSS_SEND_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: OSS_SEND_MAILBOX,
+        to: ['not-an-email'],
+        subject: 'x',
+        text: 'x',
+      }),
+    })
+    expect(res.status).toBe(502)
+    const data = await res.json() as { error: string; attempts: Array<{ provider: string; error: string }> }
+    expect(data.error).toContain('All providers failed')
+    expect(data.attempts.length).toBeGreaterThanOrEqual(1)
+    expect(data.attempts.some(a => a.provider === 'resend')).toBe(true)
+    expect(data.attempts[0]!.error).toContain('Resend')
+  })
+
+  test.skipIf(skip)('15. /api/send without auth header returns 401', async () => {
+    const res = await fetch(`${OSS_WORKER_URL}/api/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: OSS_SEND_MAILBOX,
+        to: ['x@y.com'],
+        subject: 'x',
+        text: 'x',
+      }),
+    })
+    expect(res.status).toBe(401)
+  })
+
+  test.skipIf(skip)('16. /api/send with bogus bearer returns 401', async () => {
+    const res = await fetch(`${OSS_WORKER_URL}/api/send`, {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer not_a_real_token',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: OSS_SEND_MAILBOX,
+        to: ['x@y.com'],
+        subject: 'x',
+        text: 'x',
+      }),
+    })
+    expect(res.status).toBe(401)
+  })
+
   test('11. sync emails from Worker to local sqlite', async () => {
     const { existsSync, rmSync } = await import('fs')
     const { join } = await import('path')
