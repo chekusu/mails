@@ -379,7 +379,7 @@ describe('worker: POST /api/send', () => {
 
   test('sends via Cloudflare EMAIL binding when configured', async () => {
     const { db, bindMock } = createMockD1()
-    const emailSend = mock(() => Promise.resolve({ id: 'cf-id-42' }))
+    const emailSend = mock(() => Promise.resolve({ messageId: 'cf-id-42' }))
     const env = singleMailboxEnv('me@example.com', {
       DB: db,
       EMAIL: { send: emailSend } as any,
@@ -404,9 +404,9 @@ describe('worker: POST /api/send', () => {
     expect(boundArgs[10]).toBe('cloudflare')
   })
 
-  test('falls back from Cloudflare to Resend when attachments present', async () => {
+  test('Cloudflare provider handles attachments/cc/bcc natively', async () => {
     const { db } = createMockD1()
-    const emailSend = mock(() => Promise.resolve({ id: 'cf-id' }))
+    const emailSend = mock(() => Promise.resolve({ messageId: 'cf-attach' }))
     const env = singleMailboxEnv('me@example.com', {
       DB: db,
       EMAIL: { send: emailSend } as any,
@@ -418,7 +418,9 @@ describe('worker: POST /api/send', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...SEND_BODY,
-        attachments: [{ filename: 'r.pdf', content: 'base64data' }],
+        cc: ['cc@x.com'],
+        bcc: ['bcc@x.com'],
+        attachments: [{ filename: 'r.pdf', content: 'base64data', content_type: 'application/pdf' }],
       }),
     })
 
@@ -426,34 +428,39 @@ describe('worker: POST /api/send', () => {
     const json = await response.json() as { provider: string }
 
     expect(response.status).toBe(200)
-    expect(json.provider).toBe('resend')
-    expect(emailSend).not.toHaveBeenCalled()
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(json.provider).toBe('cloudflare')
+    expect(emailSend).toHaveBeenCalledTimes(1)
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    const [msg] = (emailSend as any).mock.calls[0]
+    expect(msg.cc).toEqual(['cc@x.com'])
+    expect(msg.bcc).toEqual(['bcc@x.com'])
+    expect(msg.attachments[0].type).toBe('application/pdf')
+    expect(msg.attachments[0].disposition).toBe('attachment')
   })
 
-  test('rejects attachments when only Cloudflare configured', async () => {
+  test('falls back to Resend when Cloudflare binding throws', async () => {
     const { db } = createMockD1()
-    const emailSend = mock(() => Promise.resolve({ id: 'cf-id' }))
+    const emailSend = mock(() => Promise.reject(new Error('cf binding down')))
     const env = singleMailboxEnv('me@example.com', {
       DB: db,
       EMAIL: { send: emailSend } as any,
+      RESEND_API_KEY: 're_test_key',
     })
 
     const request = authedRequest('http://localhost/api/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...SEND_BODY,
-        attachments: [{ filename: 'r.pdf', content: 'base64data' }],
-      }),
+      body: JSON.stringify(SEND_BODY),
     })
 
     const response = await worker.fetch(request, env)
-    const json = await response.json() as { error: string }
+    const json = await response.json() as { provider: string }
 
-    expect(response.status).toBe(400)
-    expect(json.error).toContain('supports the request')
-    expect(emailSend).not.toHaveBeenCalled()
+    expect(response.status).toBe(200)
+    expect(json.provider).toBe('resend')
+    expect(emailSend).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   test('EMAIL_PROVIDERS=resend forces Resend even with EMAIL binding', async () => {

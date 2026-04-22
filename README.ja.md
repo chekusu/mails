@@ -93,7 +93,7 @@ Resendキー不要 — ホスティングユーザーは月100通無料。無制
 cd worker && wrangler deploy             # 独自Workerをデプロイ
 # 送信プロバイダを最低1つ設定：
 wrangler secret put RESEND_API_KEY       # オプションA：Resend
-#   オプションB：Cloudflare Email Service（プライベートベータ）— wrangler.toml に追加：
+#   オプションB：Cloudflare Email Service（パブリックベータ）— wrangler.toml に追加：
 #   [[send_email]]
 #   name = "EMAIL"
 # 両方設定時、デフォルトの優先順位は cloudflare → resend。

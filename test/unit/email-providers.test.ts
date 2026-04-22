@@ -21,47 +21,72 @@ const baseReq = (overrides: Partial<SendRequest> = {}): SendRequest => ({
 })
 
 describe('CloudflareProvider.supports', () => {
-  const cf = new CloudflareProvider({ send: async () => ({ id: 'x' }) })
+  const cf = new CloudflareProvider({ send: async () => ({ messageId: 'x' }) })
 
-  test('supports plain text/html', () => {
+  test('supports every request (public beta covers all features)', () => {
     expect(cf.supports(baseReq())).toBe(true)
     expect(cf.supports(baseReq({ html: '<p>hi</p>' }))).toBe(true)
     expect(cf.supports(baseReq({ reply_to: 'a@b.com' }))).toBe(true)
-  })
-
-  test('rejects attachments/cc/bcc', () => {
-    expect(cf.supports(baseReq({ attachments: [{ filename: 'f', content: 'x' }] }))).toBe(false)
-    expect(cf.supports(baseReq({ cc: ['c@d.com'] }))).toBe(false)
-    expect(cf.supports(baseReq({ bcc: ['c@d.com'] }))).toBe(false)
+    expect(cf.supports(baseReq({ cc: ['c@d.com'], bcc: ['e@f.com'] }))).toBe(true)
+    expect(cf.supports(baseReq({ attachments: [{ filename: 'f', content: 'x' }] }))).toBe(true)
   })
 })
 
 describe('CloudflareProvider.send', () => {
-  test('calls binding with normalized message and returns provider=cloudflare', async () => {
-    const sendMock = mock(() => Promise.resolve({ id: 'cf-42' }))
+  test('maps SendRequest to the Cloudflare binding shape', async () => {
+    const sendMock = mock(() => Promise.resolve({ messageId: 'cf-42' }))
     const cf = new CloudflareProvider({ send: sendMock })
 
-    const res = await cf.send(baseReq({ html: '<p>hi</p>', reply_to: 'a@b.com' }))
+    const res = await cf.send(baseReq({
+      html: '<p>hi</p>',
+      reply_to: 'a@b.com',
+      cc: ['c@d.com'],
+      bcc: ['e@f.com'],
+      attachments: [{ filename: 'note.pdf', content: 'AAA', content_type: 'application/pdf' }],
+    }))
     expect(res).toEqual({ id: 'cf-42', provider: 'cloudflare' })
 
     const [msg] = (sendMock as any).mock.calls[0]
     expect(msg.from).toBe('me@example.com')
-    expect(msg.to).toBe('you@example.com') // single recipient → string
+    expect(msg.to).toBe('you@example.com')
     expect(msg.subject).toBe('Hi')
     expect(msg.text).toBe('Hello')
     expect(msg.html).toBe('<p>hi</p>')
-    expect(msg.reply_to).toBe('a@b.com')
+    expect(msg.replyTo).toBe('a@b.com')       // camelCase per CF API
+    expect(msg.cc).toEqual(['c@d.com'])
+    expect(msg.bcc).toEqual(['e@f.com'])
+    expect(msg.attachments).toEqual([{
+      content: 'AAA',
+      filename: 'note.pdf',
+      type: 'application/pdf',               // `type`, not `content_type`
+      disposition: 'attachment',
+    }])
+    expect(msg.reply_to).toBeUndefined()     // must not leak snake_case
   })
 
   test('passes array when multiple recipients', async () => {
-    const sendMock = mock(() => Promise.resolve({ id: 'x' }))
+    const sendMock = mock(() => Promise.resolve({ messageId: 'x' }))
     const cf = new CloudflareProvider({ send: sendMock })
     await cf.send(baseReq({ to: ['a@b.com', 'c@d.com'] }))
     const [msg] = (sendMock as any).mock.calls[0]
     expect(msg.to).toEqual(['a@b.com', 'c@d.com'])
   })
 
-  test('assigns uuid when binding returns no id', async () => {
+  test('defaults attachment type to application/octet-stream when unset', async () => {
+    const sendMock = mock(() => Promise.resolve({ messageId: 'x' }))
+    const cf = new CloudflareProvider({ send: sendMock })
+    await cf.send(baseReq({ attachments: [{ filename: 'bin', content: 'x' }] }))
+    const [msg] = (sendMock as any).mock.calls[0]
+    expect(msg.attachments[0].type).toBe('application/octet-stream')
+  })
+
+  test('accepts legacy `id` field from binding response', async () => {
+    const cf = new CloudflareProvider({ send: async () => ({ id: 'legacy-42' }) as any })
+    const res = await cf.send(baseReq())
+    expect(res.id).toBe('legacy-42')
+  })
+
+  test('assigns uuid when binding returns no messageId', async () => {
     const cf = new CloudflareProvider({ send: async () => undefined })
     const res = await cf.send(baseReq())
     expect(res.provider).toBe('cloudflare')

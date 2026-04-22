@@ -160,7 +160,7 @@ describe.skipIf(skip)('Full E2E: self-hosted OSS worker', () => {
     console.log(`  Pagination: page1=${page1.length}, page2=${page2.length}`)
   })
 
-  test.skipIf(skipSend)('9. send email via OSS Worker /api/send (provider=resend)', async () => {
+  test.skipIf(skipSend)('9. send email via OSS Worker /api/send (provider=cloudflare by default)', async () => {
     const res = await fetch(`${OSS_WORKER_URL}/api/send`, {
       method: 'POST',
       headers: {
@@ -178,9 +178,11 @@ describe.skipIf(skip)('Full E2E: self-hosted OSS worker', () => {
     const data = await res.json() as { id?: string; provider?: string; error?: string }
     expect(res.ok).toBe(true)
     expect(data.id).toBeTruthy()
-    expect(data.provider).toBe('resend')
+    // EMAIL binding is configured on mails-oss-test, so the default chain
+    // (cloudflare,resend) should pick Cloudflare first.
+    expect(data.provider).toBe('cloudflare')
     console.log(`  Sent via /api/send: ${data.id} (provider=${data.provider})`)
-  })
+  }, 20000)
 
   test.skipIf(skipSend)('10. outbound D1 row persists provider field', async () => {
     const res = await fetch(
@@ -193,11 +195,11 @@ describe.skipIf(skip)('Full E2E: self-hosted OSS worker', () => {
     const latest = data.emails[0]!
     expect(latest.direction).toBe('outbound')
     expect(latest.status).toBe('sent')
-    expect(latest.provider).toBe('resend')
+    expect(latest.provider).toBe('cloudflare')
     console.log(`  Outbound row: ${latest.id.slice(0, 8)} provider=${latest.provider}`)
   })
 
-  test.skipIf(skipSend)('12. /api/send with attachment routes to Resend (skips CF)', async () => {
+  test.skipIf(skipSend)('12. /api/send with attachment routed via Cloudflare', async () => {
     const content = Buffer.from(`note-${VERIFICATION_CODE}`).toString('base64')
     const res = await fetch(`${OSS_WORKER_URL}/api/send`, {
       method: 'POST',
@@ -215,9 +217,8 @@ describe.skipIf(skip)('Full E2E: self-hosted OSS worker', () => {
     })
     const data = await res.json() as { id?: string; provider?: string; error?: string }
     expect(res.ok).toBe(true)
-    expect(data.provider).toBe('resend')
+    expect(data.provider).toBe('cloudflare')
 
-    // Confirm D1 recorded the attachment count via the outbound row.
     const inboxRes = await fetch(
       `${OSS_WORKER_URL}/api/inbox?to=${encodeURIComponent(OSS_SEND_MAILBOX)}&direction=outbound&limit=1`,
       { headers: { Authorization: `Bearer ${OSS_SEND_TOKEN}` } },
@@ -226,9 +227,9 @@ describe.skipIf(skip)('Full E2E: self-hosted OSS worker', () => {
     const latest = inbox.emails[0]!
     expect(latest.has_attachments).toBe(true)
     expect(latest.attachment_count).toBe(1)
-    expect(latest.provider).toBe('resend')
+    expect(latest.provider).toBe('cloudflare')
     console.log(`  Attachment send: ${data.id} (attachments=${latest.attachment_count}, provider=${latest.provider})`)
-  })
+  }, 20000)
 
   test.skipIf(skipSend)('13. /api/send with mismatched from returns 403', async () => {
     const res = await fetch(`${OSS_WORKER_URL}/api/send`, {
@@ -247,9 +248,9 @@ describe.skipIf(skip)('Full E2E: self-hosted OSS worker', () => {
     expect(res.status).toBe(403)
   })
 
-  test.skipIf(skipSend)('14. /api/send downstream failure surfaces 502 + attempts', async () => {
-    // Resend rejects malformed recipient addresses, letting us exercise the
-    // AllProvidersFailedError aggregation without reconfiguring the worker.
+  test.skipIf(skipSend)('14. /api/send downstream failure returns 502 with full chain attempts', async () => {
+    // Malformed "to" is rejected by both Cloudflare and Resend, so the
+    // response captures the full fallback chain in attempts[].
     const res = await fetch(`${OSS_WORKER_URL}/api/send`, {
       method: 'POST',
       headers: {
@@ -266,10 +267,12 @@ describe.skipIf(skip)('Full E2E: self-hosted OSS worker', () => {
     expect(res.status).toBe(502)
     const data = await res.json() as { error: string; attempts: Array<{ provider: string; error: string }> }
     expect(data.error).toContain('All providers failed')
-    expect(data.attempts.length).toBeGreaterThanOrEqual(1)
-    expect(data.attempts.some(a => a.provider === 'resend')).toBe(true)
-    expect(data.attempts[0]!.error).toContain('Resend')
-  })
+    expect(data.attempts.length).toBe(2)
+    expect(data.attempts[0]!.provider).toBe('cloudflare')
+    expect(data.attempts[1]!.provider).toBe('resend')
+    expect(data.attempts[0]!.error).toBeTruthy()
+    expect(data.attempts[1]!.error).toContain('Resend')
+  }, 20000)
 
   test.skipIf(skip)('15. /api/send without auth header returns 401', async () => {
     const res = await fetch(`${OSS_WORKER_URL}/api/send`, {

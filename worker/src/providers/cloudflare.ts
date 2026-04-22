@@ -1,23 +1,39 @@
 import type { EmailProvider, SendRequest, SendResult } from './types'
 
 /**
- * Cloudflare Email Service binding shape (private beta, April 2026).
- * Announcement: https://blog.cloudflare.com/email-for-agents/
+ * Cloudflare Email Service binding (public beta, April 2026).
+ * Docs: https://developers.cloudflare.com/email-service/api/send-emails/workers-api/
  *
- * The binding is expected to expose `send(message)` returning an object with
- * an `id` (message id). Field names follow the blog's example:
- * `{ to, from, subject, text }`. `html` / `reply_to` are assumed-supported
- * but can be gated in `supports()` if runtime proves otherwise.
+ * Binding declaration (wrangler.toml):
+ *   [[send_email]]
+ *   name = "EMAIL"
+ *
+ * The full API supports html, cc/bcc, replyTo, headers, and attachments, so
+ * the provider advertises every feature.
  */
+export interface CloudflareEmailAttachment {
+  content: string | ArrayBuffer
+  filename: string
+  type: string
+  disposition: 'attachment' | 'inline'
+  contentId?: string
+}
+
+export interface CloudflareEmailMessage {
+  from: string | { email: string; name?: string }
+  to: string | string[]
+  cc?: string | string[]
+  bcc?: string | string[]
+  replyTo?: string | { email: string; name?: string }
+  subject: string
+  text?: string
+  html?: string
+  headers?: Record<string, string>
+  attachments?: CloudflareEmailAttachment[]
+}
+
 export interface CloudflareEmailBinding {
-  send(message: {
-    from: string
-    to: string | string[]
-    subject: string
-    text?: string
-    html?: string
-    reply_to?: string
-  }): Promise<{ id?: string } | void>
+  send(message: CloudflareEmailMessage): Promise<{ messageId?: string; id?: string } | void>
 }
 
 export class CloudflareProvider implements EmailProvider {
@@ -25,27 +41,32 @@ export class CloudflareProvider implements EmailProvider {
 
   constructor(private binding: CloudflareEmailBinding) {}
 
-  supports(req: SendRequest): boolean {
-    if (req.attachments?.length) return false
-    if (req.cc?.length) return false
-    if (req.bcc?.length) return false
+  supports(_req: SendRequest): boolean {
     return true
   }
 
   async send(req: SendRequest): Promise<SendResult> {
-    const message: Parameters<CloudflareEmailBinding['send']>[0] = {
+    const msg: CloudflareEmailMessage = {
       from: req.from,
       to: req.to.length === 1 ? req.to[0]! : req.to,
       subject: req.subject,
     }
-    if (req.text) message.text = req.text
-    if (req.html) message.html = req.html
-    if (req.reply_to) message.reply_to = req.reply_to
+    if (req.text) msg.text = req.text
+    if (req.html) msg.html = req.html
+    if (req.reply_to) msg.replyTo = req.reply_to
+    if (req.cc?.length) msg.cc = req.cc
+    if (req.bcc?.length) msg.bcc = req.bcc
+    if (req.attachments?.length) {
+      msg.attachments = req.attachments.map(a => ({
+        content: a.content,
+        filename: a.filename,
+        type: a.content_type ?? 'application/octet-stream',
+        disposition: 'attachment' as const,
+      }))
+    }
 
-    const result = await this.binding.send(message)
-    const id = (result && typeof result === 'object' && 'id' in result && result.id)
-      ? result.id
-      : crypto.randomUUID()
+    const result = await this.binding.send(msg)
+    const id = (result && typeof result === 'object' && (result.messageId ?? result.id)) || crypto.randomUUID()
     return { id, provider: 'cloudflare' }
   }
 }

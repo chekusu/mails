@@ -16,7 +16,7 @@ database_id = "REPLACE_WITH_YOUR_DATABASE_ID"
 # Provider: Resend — set the API key as a secret:
 #   wrangler secret put RESEND_API_KEY
 #
-# Provider: Cloudflare Email Service (private beta) — add a send_email binding:
+# Provider: Cloudflare Email Service (public beta) — add a send_email binding:
 #   [[send_email]]
 #   name = "EMAIL"
 #   # destination_address = "allowed@example.com"  # optional allowlist

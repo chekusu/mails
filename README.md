@@ -93,7 +93,7 @@ No Resend key needed — hosted users get 100 free sends/month. For unlimited se
 cd worker && wrangler deploy             # Deploy your own Worker
 # Choose at least one outbound provider:
 wrangler secret put RESEND_API_KEY       # Option A: Resend
-#   Option B: Cloudflare Email Service (private beta) — add to wrangler.toml:
+#   Option B: Cloudflare Email Service (public beta) — add to wrangler.toml:
 #   [[send_email]]
 #   name = "EMAIL"
 # Both can be configured; default chain tries cloudflare → resend.
