@@ -1,7 +1,7 @@
 # Cloudflare Email Service 集成设计
 
 **Date**: 2026-04-17
-**Status**: approved
+**Status**: shipped 2026-04-19；CF 能力表于 2026-04-22 校准（见文末 Update）
 **Scope**: `mails` (OSS) + `~/Codes/mails.dev` 两仓的 worker 发送链路
 
 ## 背景
@@ -250,3 +250,26 @@ OSS 与 mails.dev 两个独立仓，短期**镜像复制** `providers/` 目录�
 | Live 测试 | `mails/test/live/` | 加 `MAILS_LIVE_CF` 标志 |
 | Wrangler 示例 | `mails/worker/wrangler.toml` | 改动注释 |
 | 文档 | README / README.zh / README.ja | 改动 |
+
+---
+
+## Update 2026-04-22 — CF Email Service 实际能力校准
+
+原设计假设 CF binding 只保证 `{to, from, subject, text}`（基于 blog 示例），并据此写出：
+
+- `CF_CAPS = { html: true, replyTo: true, attachments: false, cc: false, bcc: false }`
+- `supports()` 拒绝带 attachment/cc/bcc 的请求，由 chain 降级到 Resend
+
+**实际情况**：Email Service 已进入 public beta，[Workers API 文档](https://developers.cloudflare.com/email-service/api/send-emails/workers-api/) 明确支持 html、cc、bcc、replyTo、headers、attachments 全量字段。字段命名按 camelCase（`replyTo`、attachment 的 `type` 而非 `content_type`、响应是 `messageId`）。
+
+**代码调整**（commit `6d49a07`）：
+
+- `CloudflareProvider.supports()` 恒真，与 Resend 能力对齐
+- `send()` 映射：`reply_to → replyTo`、`content_type → type`、attachment 自动补 `disposition: 'attachment'`
+- 返回值取 `messageId`，兼容 `id` 作为 fallback
+
+**对本设计的影响**：
+
+- 能力路由（"skip CF when attachment present"）仍保留在 chain 的 `supports()` 接口层面作为扩展点，当前两个 provider 都返回 true，chain 退化为"按顺序尝试，失败降级"
+- mails.dev 生产部署现在可以直接把 `EMAIL_PROVIDERS=cloudflare,resend`（或不设）获得完整能力，无需因 attachment 额外分叉
+- 测试 worker (`mails-oss-test`) 已绑定 `[[send_email]]`，E2E 断言默认链走 CF（`provider: cloudflare`），502 场景 `attempts[]` 同时包含 CF+Resend 两跳，提供真实的链路证据
