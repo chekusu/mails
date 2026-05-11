@@ -76,6 +76,8 @@ bun install -g mails
 npx mails
 ```
 
+The CLI checks npm at most once every 24 hours and prints an update notice to stderr when a newer version is available. Disable it with `MAILS_NO_UPDATE_CHECK=1`.
+
 ## Quick Start
 
 ### Hosted (mails.dev)

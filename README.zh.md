@@ -76,6 +76,8 @@ bun install -g mails
 npx mails
 ```
 
+CLI 最多每 24 小时检查一次 npm；发现新版本时，会在 stderr 打印升级提醒。可用 `MAILS_NO_UPDATE_CHECK=1` 关闭。
+
 ## 快速开始
 
 ### 托管模式 (mails.dev)

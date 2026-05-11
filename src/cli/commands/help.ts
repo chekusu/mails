@@ -55,6 +55,8 @@ Config:
 Environment:
   MAILS_API_URL       Override API base URL (default: https://api.mails.dev)
   MAILS_CLAIM_URL     Override claim page URL (default: https://mails.dev)
+  MAILS_NO_UPDATE_CHECK
+                      Set to 1 to disable npm update checks
 
 https://mails.dev
 `.trim())

@@ -76,6 +76,8 @@ bun install -g mails
 npx mails
 ```
 
+CLI は最大 24 時間に 1 回 npm を確認し、新しいバージョンがある場合は stderr に更新通知を表示します。`MAILS_NO_UPDATE_CHECK=1` で無効化できます。
+
 ## クイックスタート
 
 ### ホスティングモード (mails.dev)

@@ -6,6 +6,7 @@ import { configCommand } from './commands/config.js'
 import { claimCommand } from './commands/claim.js'
 import { helpCommand } from './commands/help.js'
 import { syncCommand } from './commands/sync.js'
+import { checkForCliUpdate } from './update-check.js'
 import { CLI_VERSION } from '../version.js'
 
 const args = process.argv.slice(2)
@@ -49,7 +50,9 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err.message)
-  process.exit(1)
-})
+main()
+  .then(() => checkForCliUpdate().catch(() => {}))
+  .catch((err) => {
+    console.error(err.message)
+    process.exit(1)
+  })
