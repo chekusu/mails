@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { extractCode } from '../../worker/src/extract-code'
+import { extractCode, extractEmailCode, htmlToText } from '../../worker/src/extract-code'
 
 describe('extractCode', () => {
   test('extracts Chinese verification code', () => {
@@ -46,5 +46,23 @@ describe('extractCode', () => {
 
   test('handles mixed content', () => {
     expect(extractCode('Subject: Login 验证码：998877 please check')).toBe('998877')
+  })
+
+  test('extracts email code from html and stored fallback', () => {
+    expect(extractEmailCode({
+      subject: 'Login',
+      bodyHtml: '<div>Your code is&nbsp;<strong>135790</strong></div>',
+    })).toBe('135790')
+
+    expect(extractEmailCode({
+      subject: 'No live code',
+      storedCode: '246810',
+    })).toBe('246810')
+  })
+
+  test('htmlToText decodes common, decimal, and hex entities', () => {
+    expect(htmlToText('<style>.x{}</style><script>x()</script><p>A&amp;B&nbsp;&#35;&#x41;&unknown;</p>'))
+      .toBe('A&B #A&unknown;')
+    expect(htmlToText('')).toBe('')
   })
 })

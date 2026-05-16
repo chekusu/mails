@@ -150,6 +150,85 @@ const SEND_BODY = {
   text: 'World',
 }
 
+describe('worker: routing and inbound email', () => {
+  test('handles preflight, health, root, and unknown api routes', async () => {
+    const { db } = createMockD1()
+    const env = singleMailboxEnv('me@example.com', { DB: db })
+
+    const preflight = await worker.fetch(new Request('http://localhost/api/send', { method: 'OPTIONS' }), env)
+    expect(preflight.status).toBe(200)
+    expect(preflight.headers.get('Access-Control-Allow-Origin')).toBe('*')
+
+    const health = await worker.fetch(new Request('http://localhost/health'), env)
+    expect(health.status).toBe(200)
+    expect(await health.json()).toEqual({ ok: true })
+
+    const root = await worker.fetch(new Request('http://localhost/'), env)
+    const rootJson = await root.json() as { name: string; version: string }
+    expect(root.status).toBe(200)
+    expect(rootJson.name).toBe('mails-worker')
+    expect(rootJson.version).toBe('1.0.0')
+
+    const unknown = await worker.fetch(authedRequest('http://localhost/api/unknown'), env)
+    expect(unknown.status).toBe(404)
+  })
+
+  test('stores inbound email and attachment rows', async () => {
+    const bindCalls: unknown[][] = []
+    const prepareMock = mock((_sql: string) => ({
+      bind: mock((...args: unknown[]) => {
+        bindCalls.push(args)
+        return { run: mock(async () => ({ success: true })) }
+      }),
+    }))
+    const batchMock = mock(async (_statements: unknown[]) => ({ success: true }))
+    const db = { prepare: prepareMock, batch: batchMock } as unknown as D1Database
+    const attachment = Buffer.from('verification notes').toString('base64')
+    const raw = [
+      'From: "Alice" <alice@example.com>',
+      'Subject: Login code',
+      'Message-ID: <inbound-1@example.com>',
+      'Content-Type: multipart/mixed; boundary="b"',
+      '',
+      '--b',
+      'Content-Type: text/html; charset="utf-8"',
+      '',
+      '<p>Your code is <strong>456789</strong></p>',
+      '--b',
+      'Content-Type: text/plain; name="notes.txt"',
+      'Content-Disposition: attachment; filename="notes.txt"',
+      'Content-Transfer-Encoding: base64',
+      '',
+      attachment,
+      '--b--',
+      '',
+    ].join('\r\n')
+    const message = {
+      to: 'Agent@Test.com',
+      from: 'bounce@example.com',
+      headers: new Headers({
+        from: '"Alice" <alice@example.com>',
+        subject: 'Login code',
+      }),
+      raw: new TextEncoder().encode(raw).buffer,
+    } as unknown as ForwardableEmailMessage
+
+    await worker.email(message, { DB: db })
+
+    expect(batchMock).toHaveBeenCalledTimes(1)
+    expect(prepareMock).toHaveBeenCalledTimes(2)
+    expect(bindCalls).toHaveLength(2)
+    expect(bindCalls[0]![1]).toBe('agent@test.com')
+    expect(bindCalls[0]![2]).toBe('alice@example.com')
+    expect(bindCalls[0]![5]).toBe('Login code')
+    expect(bindCalls[0]![8]).toBe('456789')
+    expect(bindCalls[0]![12]).toBe(1)
+    expect(bindCalls[0]![14]).toBe('notes.txt')
+    expect(bindCalls[1]![2]).toBe('notes.txt')
+    expect(bindCalls[1]![8]).toBe('verification notes')
+  })
+})
+
 describe('worker: POST /api/send', () => {
   const originalFetch = globalThis.fetch
   let fetchMock: ReturnType<typeof mock>
@@ -599,7 +678,97 @@ function createSyncMockD1(options: {
   return { db: { prepare: prepareMock } as unknown as D1Database, prepareMock }
 }
 
+describe('worker: auth token configuration', () => {
+  test('rejects single token config without mailbox', async () => {
+    const { db } = createSyncMockD1()
+    const response = await worker.fetch(
+      authedRequest('http://localhost/api/sync?to=user@test.com', {}, 'secret'),
+      { DB: db, AUTH_TOKEN: 'secret' },
+    )
+    const json = await response.json() as { error: string }
+
+    expect(response.status).toBe(503)
+    expect(json.error).toBe('MAILBOX not configured')
+  })
+
+  test('rejects invalid token map configuration', async () => {
+    const { db } = createSyncMockD1()
+
+    const invalidJson = await worker.fetch(
+      authedRequest('http://localhost/api/sync?to=user@test.com', {}, 'secret'),
+      { DB: db, AUTH_TOKENS_JSON: '{bad json' },
+    )
+    expect(invalidJson.status).toBe(503)
+    expect((await invalidJson.json() as { error: string }).error).toBe('AUTH_TOKENS_JSON is invalid')
+
+    const emptyMap = await worker.fetch(
+      authedRequest('http://localhost/api/sync?to=user@test.com', {}, 'secret'),
+      { DB: db, AUTH_TOKENS_JSON: '{}' },
+    )
+    expect(emptyMap.status).toBe(503)
+
+    const invalidToken = await worker.fetch(
+      authedRequest('http://localhost/api/sync?to=user@test.com', {}, 'secret'),
+      { DB: db, AUTH_TOKENS_JSON: '{"user@test.com":""}' },
+    )
+    expect(invalidToken.status).toBe(503)
+  })
+
+  test('supports multi-mailbox token maps and rejects duplicate token matches', async () => {
+    const { db } = createSyncMockD1()
+    const response = await worker.fetch(
+      authedRequest('http://localhost/api/sync?to=agent@test.com', {}, 'agent-token'),
+      {
+        DB: db,
+        AUTH_TOKENS_JSON: JSON.stringify({
+          'agent@test.com': 'agent-token',
+          'other@test.com': 'other-token',
+        }),
+      },
+    )
+    expect(response.status).toBe(200)
+
+    const duplicate = await worker.fetch(
+      authedRequest('http://localhost/api/sync?to=agent@test.com', {}, 'same-token'),
+      {
+        DB: db,
+        AUTH_TOKENS_JSON: JSON.stringify({
+          'agent@test.com': 'same-token',
+          'alias@test.com': 'same-token',
+        }),
+      },
+    )
+    const json = await duplicate.json() as { error: string }
+    expect(duplicate.status).toBe(503)
+    expect(json.error).toBe('Duplicate mailbox tokens are not allowed')
+  })
+})
+
 describe('worker: GET /api/inbox and /api/code', () => {
+  test('returns 400 when inbox or code target mailbox is missing', async () => {
+    const { db } = createSyncMockD1()
+    const env = singleMailboxEnv('user@test.com', { DB: db })
+
+    const inbox = await worker.fetch(authedRequest('http://localhost/api/inbox'), env)
+    expect(inbox.status).toBe(400)
+
+    const code = await worker.fetch(authedRequest('http://localhost/api/code?timeout=0'), env)
+    expect(code.status).toBe(400)
+  })
+
+  test('returns null when code polling times out', async () => {
+    const { db } = createSyncMockD1({ emailRows: [] })
+    const env = singleMailboxEnv('user@test.com', { DB: db })
+    const response = await worker.fetch(
+      authedRequest('http://localhost/api/code?to=user@test.com&timeout=0'),
+      env,
+    )
+    const json = await response.json() as { code: string | null }
+
+    expect(response.status).toBe(200)
+    expect(json.code).toBeNull()
+  })
+
   test('escapes LIKE wildcards in inbox search', async () => {
     let capturedSql = ''
     let capturedArgs: unknown[] = []
@@ -711,6 +880,24 @@ describe('worker: GET /api/inbox and /api/code', () => {
 })
 
 describe('worker: GET /api/email', () => {
+  test('returns 400 when id is missing and 404 when email is not found', async () => {
+    const prepareMock = mock((_sql: string) => ({
+      bind: mock(() => ({
+        first: mock(() => Promise.resolve(null)),
+        all: mock(() => Promise.resolve({ results: [] })),
+      })),
+    }))
+    const env = singleMailboxEnv('user@test.com', { DB: { prepare: prepareMock } as unknown as D1Database })
+
+    const missing = await worker.fetch(authedRequest('http://localhost/api/email'), env)
+    expect(missing.status).toBe(400)
+
+    const notFound = await worker.fetch(authedRequest('http://localhost/api/email?id=missing'), env)
+    const json = await notFound.json() as { error: string }
+    expect(notFound.status).toBe(404)
+    expect(json.error).toBe('Email not found')
+  })
+
   test('returns email for a unique short id prefix', async () => {
     let callIndex = 0
     const prepareMock = mock((_sql: string) => {
@@ -824,6 +1011,23 @@ describe('worker: GET /api/sync', () => {
     expect(json.emails[0].attachments).toHaveLength(1)
     expect(json.emails[0].attachments[0].filename).toBe('report.txt')
     expect(json.emails[0].attachments[0].downloadable).toBe(true)
+  })
+
+  test('falls back for invalid JSON headers and metadata', async () => {
+    const email = makeSyncEmail({ headers: '{bad', metadata: '{bad' })
+    const { db } = createSyncMockD1({
+      total: 1,
+      emailRows: [email],
+      attachmentRows: [[]],
+    })
+    const env = singleMailboxEnv('user@test.com', { DB: db })
+
+    const response = await worker.fetch(authedRequest('http://localhost/api/sync?to=user@test.com'), env)
+    const json = await response.json() as { emails: Array<{ headers: unknown; metadata: unknown }> }
+
+    expect(response.status).toBe(200)
+    expect(json.emails[0]!.headers).toEqual({})
+    expect(json.emails[0]!.metadata).toEqual({})
   })
 
   test('supports pagination', async () => {

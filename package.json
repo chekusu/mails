@@ -20,7 +20,7 @@
     "dev": "bun run src/cli/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test test/unit test/e2e/flow.test.ts test/e2e/sqlite-search.test.ts && bun test test/e2e/inbox-integration.test.ts",
-    "test:coverage": "bun test --coverage test/unit test/e2e/flow.test.ts && bun test --coverage test/e2e/inbox-integration.test.ts",
+    "test:coverage": "bun test --coverage test/unit test/e2e/flow.test.ts test/e2e/sqlite-search.test.ts test/e2e/inbox-integration.test.ts",
     "test:live": "bun test test/e2e/live.test.ts",
     "test:cloud": "bun run test/e2e/cloud-e2e.ts",
     "test:all": "bun test"

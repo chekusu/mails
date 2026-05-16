@@ -1,6 +1,7 @@
 import { describe, expect, test, beforeEach, afterEach, mock } from 'bun:test'
 import { saveConfig, setConfigValue } from '../../src/core/config'
-import type { MailsConfig } from '../../src/core/types'
+import type { MailsConfig, StorageProvider } from '../../src/core/types'
+import { getStorage, _resetStorage } from '../../src/core/storage'
 
 describe('storage resolver', () => {
   const originalFetch = globalThis.fetch
@@ -14,16 +15,16 @@ describe('storage resolver', () => {
       send_provider: 'resend',
       storage_provider: 'sqlite',
     } as MailsConfig)
+    _resetStorage()
   })
 
   afterEach(() => {
     globalThis.fetch = originalFetch
+    _resetStorage()
   })
 
   test('resolves sqlite by default', async () => {
-    // Clear module cache to get fresh _provider
-    const mod = await reimportStorage()
-    const provider = await mod.getStorage()
+    const provider = await getStorage()
     expect(provider.name).toBe('sqlite')
   })
 
@@ -37,72 +38,118 @@ describe('storage resolver', () => {
       return new Response(JSON.stringify({ columns: [], rows: [], row_count: 0 }))
     }) as typeof fetch
 
-    const mod = await reimportStorage()
-    const provider = await mod.getStorage()
+    const provider = await getStorage()
     expect(provider.name).toBe('db9')
   })
 
   test('throws when db9 token missing', async () => {
     setConfigValue('storage_provider', 'db9')
 
-    const mod = await reimportStorage()
-    expect(mod.getStorage()).rejects.toThrow('db9_token not configured')
+    expect(getStorage()).rejects.toThrow('db9_token not configured')
   })
 
   test('throws when db9 database_id missing', async () => {
     setConfigValue('storage_provider', 'db9')
     setConfigValue('db9_token', 'some-token')
 
-    const mod = await reimportStorage()
-    expect(mod.getStorage()).rejects.toThrow('db9_database_id not configured')
+    expect(getStorage()).rejects.toThrow('db9_database_id not configured')
+  })
+
+  test('resolves explicit remote storage with hosted api key', async () => {
+    saveConfig({
+      mode: 'hosted',
+      domain: 'mails.dev',
+      mailbox: 'agent@mails.dev',
+      send_provider: 'resend',
+      storage_provider: 'remote',
+      api_key: 'mk_test',
+    } as MailsConfig)
+
+    const provider = await getStorage()
+    expect(provider.name).toBe('remote')
+  })
+
+  test('auto-detects remote storage from worker_url', async () => {
+    saveConfig({
+      mode: 'selfhosted',
+      domain: 'example.com',
+      mailbox: 'agent@example.com',
+      send_provider: 'resend',
+      storage_provider: '',
+      worker_url: 'https://worker.example.com',
+      worker_token: 'worker-token',
+    } as unknown as MailsConfig)
+
+    const provider = await getStorage()
+    expect(provider.name).toBe('remote')
+  })
+
+  test('auto-resolves mailbox for hosted remote storage', async () => {
+    saveConfig({
+      mode: 'hosted',
+      domain: 'mails.dev',
+      mailbox: '',
+      send_provider: 'resend',
+      storage_provider: 'remote',
+      api_key: 'mk_test',
+    } as MailsConfig)
+    globalThis.fetch = mock(async () => {
+      return Response.json({ mailbox: 'agent@mails.dev' })
+    }) as typeof fetch
+
+    const provider = await getStorage()
+    expect(provider.name).toBe('remote')
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  test('throws when remote mailbox cannot be resolved', async () => {
+    saveConfig({
+      mode: 'hosted',
+      domain: 'mails.dev',
+      mailbox: '',
+      send_provider: 'resend',
+      storage_provider: 'remote',
+      api_key: 'mk_test',
+    } as MailsConfig)
+    globalThis.fetch = mock(async () => {
+      return Response.json({}, { status: 200 })
+    }) as typeof fetch
+
+    expect(getStorage()).rejects.toThrow('mailbox not configured')
+  })
+
+  test('throws when self-hosted remote is missing worker token', async () => {
+    saveConfig({
+      mode: 'selfhosted',
+      domain: 'example.com',
+      mailbox: 'agent@example.com',
+      send_provider: 'resend',
+      storage_provider: 'remote',
+      worker_url: 'https://worker.example.com',
+    } as unknown as MailsConfig)
+
+    expect(getStorage()).rejects.toThrow('worker_token not configured')
   })
 
   test('caches provider on second call', async () => {
-    const mod = await reimportStorage()
-    const p1 = await mod.getStorage()
-    const p2 = await mod.getStorage()
+    const p1 = await getStorage()
+    const p2 = await getStorage()
     expect(p1).toBe(p2) // same instance
   })
+
+  test('returns injected provider from reset helper', async () => {
+    const injected = {
+      name: 'injected',
+      init: mock(async () => {}),
+      saveEmail: mock(async () => {}),
+      getEmails: mock(async () => []),
+      searchEmails: mock(async () => []),
+      getEmail: mock(async () => null),
+      getCode: mock(async () => null),
+    } as unknown as StorageProvider
+
+    _resetStorage(injected)
+    expect(await getStorage()).toBe(injected)
+    expect(injected.init).not.toHaveBeenCalled()
+  })
 })
-
-// Helper to bust module cache and get fresh storage module
-let counter = 0
-async function reimportStorage() {
-  // Bun caches modules, so we use a query param trick
-  counter++
-  // We can't bust ESM cache easily, so we re-create the logic inline
-  const { loadConfig } = await import('../../src/core/config')
-  const { createSqliteProvider } = await import('../../src/providers/storage/sqlite')
-  const { createDb9Provider } = await import('../../src/providers/storage/db9')
-  const type = await import('../../src/core/types')
-
-  let _provider: type.StorageProvider | null = null
-
-  return {
-    async getStorage(): Promise<type.StorageProvider> {
-      if (_provider) return _provider
-
-      const config = loadConfig()
-      switch (config.storage_provider) {
-        case 'db9': {
-          if (!config.db9_token) {
-            throw new Error('db9_token not configured. Run: mails config set db9_token <token>')
-          }
-          if (!config.db9_database_id) {
-            throw new Error('db9_database_id not configured. Run: mails config set db9_database_id <id>')
-          }
-          _provider = createDb9Provider(config.db9_token, config.db9_database_id)
-          break
-        }
-        case 'sqlite':
-        default: {
-          _provider = createSqliteProvider()
-          break
-        }
-      }
-
-      await _provider.init()
-      return _provider
-    },
-  }
-}

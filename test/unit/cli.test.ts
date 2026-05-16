@@ -1,15 +1,20 @@
-import { describe, expect, test, mock, afterEach } from 'bun:test'
+import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test'
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { setConfigValue, loadConfig, saveConfig, CONFIG_DIR, CONFIG_FILE } from '../../src/core/config'
-import type { Email } from '../../src/core/types'
+import type { Email, StorageProvider } from '../../src/core/types'
+import { _resetStorage } from '../../src/core/storage'
 
 describe('CLI: send command', () => {
   const originalFetch = globalThis.fetch
+  const originalError = console.error
+  const originalExit = process.exit
   const attachmentPath = join(import.meta.dir, '..', '.cli-attachment.txt')
 
   afterEach(() => {
     globalThis.fetch = originalFetch
+    console.error = originalError
+    process.exit = originalExit
     if (existsSync(attachmentPath)) rmSync(attachmentPath)
   })
 
@@ -86,9 +91,46 @@ describe('CLI: send command', () => {
       },
     ])
   })
+
+  test('send command validates required arguments', async () => {
+    const errors: string[] = []
+    console.error = (msg?: unknown) => { errors.push(String(msg ?? '')) }
+    process.exit = ((code?: number) => { throw new Error(`exit:${code ?? 0}`) }) as typeof process.exit
+    const { sendCommand } = await import('../../src/cli/commands/send')
+
+    await expect(sendCommand([])).rejects.toThrow('exit:1')
+    await expect(sendCommand(['--to', 'user@example.com'])).rejects.toThrow('exit:1')
+    await expect(sendCommand(['--to', 'user@example.com', '--subject', 'Hi'])).rejects.toThrow('exit:1')
+
+    expect(errors.join('\n')).toContain('Usage: mails send')
+    expect(errors.join('\n')).toContain('Missing --subject')
+    expect(errors.join('\n')).toContain('Missing --body or --html')
+  })
 })
 
 describe('CLI: config command', () => {
+  const originalLog = console.log
+  const originalError = console.error
+  const originalExit = process.exit
+  const originalFetch = globalThis.fetch
+
+  beforeEach(() => {
+    saveConfig({
+      mode: 'hosted',
+      domain: 'mails.dev',
+      mailbox: '',
+      send_provider: 'resend',
+      storage_provider: 'sqlite',
+    })
+  })
+
+  afterEach(() => {
+    console.log = originalLog
+    console.error = originalError
+    process.exit = originalExit
+    globalThis.fetch = originalFetch
+  })
+
   test('config set and get work', () => {
     setConfigValue('domain', 'cli-test.com')
     const { getConfigValue } = require('../../src/core/config')
@@ -134,6 +176,70 @@ describe('CLI: config command', () => {
       expect(statSync(CONFIG_FILE).mode & 0o777).toBe(0o600)
     }
   })
+
+  test('config command validates set arguments', async () => {
+    const errors: string[] = []
+    console.error = (msg?: unknown) => { errors.push(String(msg ?? '')) }
+    process.exit = ((code?: number) => { throw new Error(`exit:${code ?? 0}`) }) as typeof process.exit
+
+    const { configCommand } = await import('../../src/cli/commands/config')
+    await expect(configCommand(['set', 'domain'])).rejects.toThrow('exit:1')
+    expect(errors.join('\n')).toContain('Usage: mails config set')
+  })
+
+  test('config command gets values and exits for missing keys', async () => {
+    const output: string[] = []
+    const errors: string[] = []
+    console.log = (msg?: unknown) => { output.push(String(msg ?? '')) }
+    console.error = (msg?: unknown) => { errors.push(String(msg ?? '')) }
+    process.exit = ((code?: number) => { throw new Error(`exit:${code ?? 0}`) }) as typeof process.exit
+
+    const { configCommand } = await import('../../src/cli/commands/config')
+    await configCommand(['set', 'domain', 'cli.example'])
+    await configCommand(['get', 'domain'])
+    expect(output).toContain('cli.example')
+
+    await expect(configCommand(['get', 'missing_key'])).rejects.toThrow('exit:1')
+    expect(errors.join('\n')).toContain('Key "missing_key" not set')
+  })
+
+  test('config command validates get arguments and prints config path', async () => {
+    const output: string[] = []
+    const errors: string[] = []
+    console.log = (msg?: unknown) => { output.push(String(msg ?? '')) }
+    console.error = (msg?: unknown) => { errors.push(String(msg ?? '')) }
+    process.exit = ((code?: number) => { throw new Error(`exit:${code ?? 0}`) }) as typeof process.exit
+
+    const { configCommand } = await import('../../src/cli/commands/config')
+    await expect(configCommand(['get'])).rejects.toThrow('exit:1')
+    await configCommand(['path'])
+
+    expect(errors.join('\n')).toContain('Usage: mails config get')
+    expect(output).toContain(CONFIG_FILE)
+  })
+
+  test('config command resolves hosted api key metadata', async () => {
+    const output: string[] = []
+    console.log = (msg?: unknown) => { output.push(String(msg ?? '')) }
+    globalThis.fetch = mock(async () => Response.json({ mailbox: 'agent@mails.dev' })) as typeof fetch
+
+    const { configCommand } = await import('../../src/cli/commands/config')
+    await configCommand(['set', 'api_key', 'mk_hosted_secret_1234'])
+
+    const config = loadConfig()
+    expect(config.mailbox).toBe('agent@mails.dev')
+    expect(config.default_from).toBe('agent@mails.dev')
+    expect(config.storage_provider).toBe('remote')
+    expect(output.join('\n')).toContain('Resolved mailbox: agent@mails.dev')
+  })
+
+  test('config command switches storage when worker_url is set', async () => {
+    console.log = () => {}
+    const { configCommand } = await import('../../src/cli/commands/config')
+    await configCommand(['set', 'worker_url', 'https://worker.example.com'])
+
+    expect(loadConfig().storage_provider).toBe('remote')
+  })
 })
 
 describe('CLI: version', () => {
@@ -169,10 +275,21 @@ describe('CLI: inbox command', () => {
   const originalExit = process.exit
   let importCounter = 0
 
+  beforeEach(() => {
+    saveConfig({
+      mode: 'hosted',
+      domain: 'mails.dev',
+      mailbox: 'agent@test.com',
+      send_provider: 'resend',
+      storage_provider: 'sqlite',
+    })
+  })
+
   afterEach(() => {
     console.log = originalLog
     console.error = originalError
     process.exit = originalExit
+    _resetStorage()
     mock.restore()
   })
 
@@ -202,28 +319,33 @@ describe('CLI: inbox command', () => {
     return await import(`../../src/cli/commands/inbox.ts?test=${importCounter}`)
   }
 
+  function useStorage(overrides: Partial<StorageProvider> = {}) {
+    const provider = {
+      name: 'test',
+      init: mock(async () => {}),
+      saveEmail: mock(async () => {}),
+      getEmails: mock(async () => []),
+      searchEmails: mock(async () => []),
+      getEmail: mock(async () => null),
+      getAttachment: mock(async () => null),
+      getCode: mock(async () => null),
+      ...overrides,
+    } as StorageProvider
+    _resetStorage(provider)
+    return provider
+  }
+
   test('search mode uses searchInbox and prints query-specific empty state', async () => {
     const getInboxSpy = mock(async () => [])
     const searchInboxSpy = mock(async () => [])
     const getEmailSpy = mock(async () => null)
     const output: string[] = []
 
-    mock.module('../../src/core/receive.js', () => ({
-      getInbox: getInboxSpy,
-      searchInbox: searchInboxSpy,
+    useStorage({
+      getEmails: getInboxSpy,
+      searchEmails: searchInboxSpy,
       getEmail: getEmailSpy,
-      downloadAttachment: mock(async () => null),
-      waitForCode: mock(async () => null),
-    }))
-    mock.module('../../src/core/config.js', () => ({
-      loadConfig: () => ({ mailbox: 'agent@test.com', send_provider: 'resend', storage_provider: 'sqlite' }),
-      saveConfig: mock(() => {}),
-      getConfigValue: mock(() => undefined),
-      setConfigValue: mock(() => {}),
-      resolveApiKey: mock(async () => null),
-      CONFIG_DIR: '/tmp/.mails',
-      CONFIG_FILE: '/tmp/.mails/config.json',
-    }))
+    })
 
     console.log = (msg?: unknown) => { output.push(String(msg ?? '')) }
     console.error = () => {}
@@ -247,22 +369,10 @@ describe('CLI: inbox command', () => {
     const searchInboxSpy = mock(async () => [])
     const output: string[] = []
 
-    mock.module('../../src/core/receive.js', () => ({
-      getInbox: getInboxSpy,
-      searchInbox: searchInboxSpy,
-      getEmail: mock(async () => null),
-      downloadAttachment: mock(async () => null),
-      waitForCode: mock(async () => null),
-    }))
-    mock.module('../../src/core/config.js', () => ({
-      loadConfig: () => ({ mailbox: 'agent@test.com', send_provider: 'resend', storage_provider: 'sqlite' }),
-      saveConfig: mock(() => {}),
-      getConfigValue: mock(() => undefined),
-      setConfigValue: mock(() => {}),
-      resolveApiKey: mock(async () => null),
-      CONFIG_DIR: '/tmp/.mails',
-      CONFIG_FILE: '/tmp/.mails/config.json',
-    }))
+    useStorage({
+      getEmails: getInboxSpy,
+      searchEmails: searchInboxSpy,
+    })
 
     console.log = (msg?: unknown) => { output.push(String(msg ?? '')) }
     console.error = () => {}
@@ -291,22 +401,7 @@ describe('CLI: inbox command', () => {
     const getInboxSpy = mock(async () => [email])
     const output: string[] = []
 
-    mock.module('../../src/core/receive.js', () => ({
-      getInbox: getInboxSpy,
-      searchInbox: mock(async () => []),
-      getEmail: mock(async () => null),
-      downloadAttachment: mock(async () => null),
-      waitForCode: mock(async () => null),
-    }))
-    mock.module('../../src/core/config.js', () => ({
-      loadConfig: () => ({ mailbox: 'agent@test.com', send_provider: 'resend', storage_provider: 'sqlite' }),
-      saveConfig: mock(() => {}),
-      getConfigValue: mock(() => undefined),
-      setConfigValue: mock(() => {}),
-      resolveApiKey: mock(async () => null),
-      CONFIG_DIR: '/tmp/.mails',
-      CONFIG_FILE: '/tmp/.mails/config.json',
-    }))
+    useStorage({ getEmails: getInboxSpy })
 
     console.log = (msg?: unknown) => { output.push(String(msg ?? '')) }
     console.error = () => {}
@@ -325,22 +420,7 @@ describe('CLI: inbox command', () => {
     const email = makeEmail({ id: 'full-id-12345', subject: 'Full id email' })
     const output: string[] = []
 
-    mock.module('../../src/core/receive.js', () => ({
-      getInbox: mock(async () => [email]),
-      searchInbox: mock(async () => []),
-      getEmail: mock(async () => null),
-      downloadAttachment: mock(async () => null),
-      waitForCode: mock(async () => null),
-    }))
-    mock.module('../../src/core/config.js', () => ({
-      loadConfig: () => ({ mailbox: 'agent@test.com', send_provider: 'resend', storage_provider: 'sqlite' }),
-      saveConfig: mock(() => {}),
-      getConfigValue: mock(() => undefined),
-      setConfigValue: mock(() => {}),
-      resolveApiKey: mock(async () => null),
-      CONFIG_DIR: '/tmp/.mails',
-      CONFIG_FILE: '/tmp/.mails/config.json',
-    }))
+    useStorage({ getEmails: mock(async () => [email]) })
 
     console.log = (msg?: unknown) => { output.push(String(msg ?? '')) }
     console.error = () => {}
@@ -359,22 +439,7 @@ describe('CLI: inbox command', () => {
     const getInboxSpy = mock(async () => [email])
     const output: string[] = []
 
-    mock.module('../../src/core/receive.js', () => ({
-      getInbox: getInboxSpy,
-      searchInbox: mock(async () => []),
-      getEmail: mock(async () => null),
-      downloadAttachment: mock(async () => null),
-      waitForCode: mock(async () => null),
-    }))
-    mock.module('../../src/core/config.js', () => ({
-      loadConfig: () => ({ mailbox: 'agent@test.com', send_provider: 'resend', storage_provider: 'sqlite' }),
-      saveConfig: mock(() => {}),
-      getConfigValue: mock(() => undefined),
-      setConfigValue: mock(() => {}),
-      resolveApiKey: mock(async () => null),
-      CONFIG_DIR: '/tmp/.mails',
-      CONFIG_FILE: '/tmp/.mails/config.json',
-    }))
+    useStorage({ getEmails: getInboxSpy })
 
     console.log = (msg?: unknown) => { output.push(String(msg ?? '')) }
     console.error = () => {}
@@ -426,13 +491,7 @@ describe('CLI: inbox command', () => {
     })
     const output: string[] = []
 
-    mock.module('../../src/core/receive.js', () => ({
-      getInbox: mock(async () => []),
-      searchInbox: mock(async () => []),
-      getEmail: mock(async () => email),
-      downloadAttachment: mock(async () => null),
-      waitForCode: mock(async () => null),
-    }))
+    useStorage({ getEmail: mock(async () => email) })
 
     console.log = (msg?: unknown) => { output.push(String(msg ?? '')) }
     console.error = () => {}
@@ -475,13 +534,7 @@ describe('CLI: inbox command', () => {
     })
     const output: string[] = []
 
-    mock.module('../../src/core/receive.js', () => ({
-      getInbox: mock(async () => []),
-      searchInbox: mock(async () => []),
-      getEmail: mock(async () => email),
-      downloadAttachment: mock(async () => null),
-      waitForCode: mock(async () => null),
-    }))
+    useStorage({ getEmail: mock(async () => email) })
 
     console.log = (msg?: unknown) => { output.push(String(msg ?? '')) }
     console.error = () => {}
@@ -521,17 +574,14 @@ describe('CLI: inbox command', () => {
 
     if (existsSync(saveDir)) rmSync(saveDir, { recursive: true, force: true })
 
-    mock.module('../../src/core/receive.js', () => ({
-      getInbox: mock(async () => []),
-      searchInbox: mock(async () => []),
+    useStorage({
       getEmail: mock(async () => email),
-      downloadAttachment: mock(async () => ({
+      getAttachment: mock(async () => ({
         filename: '../../escape.txt',
         contentType: 'text/plain',
         data: new TextEncoder().encode('safe').buffer,
       })),
-      waitForCode: mock(async () => null),
-    }))
+    })
 
     console.log = (msg?: unknown) => { output.push(String(msg ?? '')) }
     console.error = () => {}
