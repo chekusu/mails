@@ -28,7 +28,9 @@ export async function codeCommand(args: string[]) {
   }
 
   const timeout = opts.timeout ? parseInt(opts.timeout) : 30
-  const since = opts.since ?? new Date().toISOString()
+  // No default for since: when omitted, existing codes are matched too,
+  // so a code that arrived just before the command was run is still found.
+  const since = opts.since
 
   console.error(`Waiting for verification code to ${mailbox} (timeout: ${timeout}s)...`)
 
