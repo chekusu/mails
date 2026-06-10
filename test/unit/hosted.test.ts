@@ -118,6 +118,17 @@ describe('Hosted send provider', () => {
     ).rejects.toThrow('Resend: rate limit')
   })
 
+  test('throws when ok response is missing message id', async () => {
+    globalThis.fetch = mock(async () => {
+      return new Response(JSON.stringify({ sends_this_month: 1, monthly_limit: 100 }))
+    }) as typeof fetch
+
+    const provider = createHostedSendProvider('mk_key')
+    expect(
+      provider.send({ from: 'a@b.dev', to: ['c@d.com'], subject: 'NoId', text: 'x' })
+    ).rejects.toThrow('did not include a message id')
+  })
+
   test('uses default API URL when not specified', async () => {
     let requestUrl = ''
     globalThis.fetch = mock(async (url: string) => {

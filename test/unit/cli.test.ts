@@ -602,3 +602,86 @@ describe('CLI: inbox command', () => {
     rmSync(saveDir, { recursive: true, force: true })
   })
 })
+
+describe('CLI: code command', () => {
+  const originalLog = console.log
+  const originalError = console.error
+  const originalExit = process.exit
+
+  beforeEach(() => {
+    saveConfig({
+      mode: 'hosted',
+      domain: 'mails.dev',
+      mailbox: 'agent@test.com',
+      send_provider: 'resend',
+      storage_provider: 'sqlite',
+    })
+  })
+
+  afterEach(() => {
+    console.log = originalLog
+    console.error = originalError
+    process.exit = originalExit
+    _resetStorage()
+    mock.restore()
+  })
+
+  function useCodeStorage(getCode: StorageProvider['getCode']) {
+    const provider = {
+      name: 'test',
+      init: mock(async () => {}),
+      saveEmail: mock(async () => {}),
+      getEmails: mock(async () => []),
+      searchEmails: mock(async () => []),
+      getEmail: mock(async () => null),
+      getAttachment: mock(async () => null),
+      getCode,
+    } as StorageProvider
+    _resetStorage(provider)
+    return provider
+  }
+
+  test('does not default --since to now, so pre-existing codes are found', async () => {
+    const getCodeSpy = mock(async () => ({
+      code: '424242',
+      from: 'noreply@service.com',
+      subject: 'Your verification code',
+    }))
+    useCodeStorage(getCodeSpy)
+
+    const output: string[] = []
+    console.log = (msg?: unknown) => { output.push(String(msg ?? '')) }
+    console.error = () => {}
+    process.exit = ((code?: number) => { throw new Error(`exit:${code ?? 0}`) }) as typeof process.exit
+
+    const { codeCommand } = await import('../../src/cli/commands/code')
+    await codeCommand(['--to', 'agent@test.com'])
+
+    expect(getCodeSpy.mock.calls).toHaveLength(1)
+    expect(getCodeSpy.mock.calls[0]).toEqual([
+      'agent@test.com',
+      { timeout: 30, since: undefined },
+    ])
+    expect(output.join('\n')).toContain('424242')
+  })
+
+  test('passes explicit --since through to storage', async () => {
+    const getCodeSpy = mock(async () => null)
+    useCodeStorage(getCodeSpy)
+
+    console.log = () => {}
+    console.error = () => {}
+    process.exit = ((code?: number) => { throw new Error(`exit:${code ?? 0}`) }) as typeof process.exit
+
+    const { codeCommand } = await import('../../src/cli/commands/code')
+    await expect(
+      codeCommand(['--to', 'agent@test.com', '--since', '2025-06-01T00:00:00Z', '--timeout', '5'])
+    ).rejects.toThrow('exit:1')
+
+    expect(getCodeSpy.mock.calls).toHaveLength(1)
+    expect(getCodeSpy.mock.calls[0]).toEqual([
+      'agent@test.com',
+      { timeout: 5, since: '2025-06-01T00:00:00Z' },
+    ])
+  })
+})

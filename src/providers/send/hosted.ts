@@ -55,7 +55,11 @@ export function createHostedSendProvider(apiKey: string, apiUrl?: string): SendP
         process.stderr.write(`  [${data.sends_this_month}/${data.monthly_limit} this month]\n`)
       }
 
-      return { id: data.id!, provider: 'mails.dev' }
+      if (!data.id) {
+        throw new Error('Send succeeded but the API response did not include a message id')
+      }
+
+      return { id: data.id, provider: 'mails.dev' }
     },
   }
 }
