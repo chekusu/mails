@@ -5,7 +5,7 @@ Email infrastructure for AI agents. Send and receive emails programmatically.
 [![npm](https://img.shields.io/npm/v/mails)](https://www.npmjs.com/package/mails)
 [![license](https://img.shields.io/npm/l/mails)](https://github.com/chekusu/mails/blob/main/LICENSE)
 
-[日本語](https://github.com/chekusu/mails/blob/main/README.ja.md) | [中文](https://github.com/chekusu/mails/blob/main/README.zh.md)
+**English** | [日本語](https://github.com/chekusu/mails/blob/main/README.ja.md) | [中文](https://github.com/chekusu/mails/blob/main/README.md)
 
 ## How it works
 
@@ -76,7 +76,7 @@ bun install -g mails
 npx mails
 ```
 
-The CLI checks npm at most once every 24 hours and prints an update notice to stderr when a newer version is available. Disable it with `MAILS_NO_UPDATE_CHECK=1`.
+The CLI checks npm at most once every 24 hours and prints an update notice to stderr when a newer version is available. Disable it with `MAILS_NO_UPDATE_CHECK=1` (checks are also skipped when `NO_UPDATE_NOTIFIER=1` or `CI=1`).
 
 ## Quick Start
 
@@ -132,6 +132,7 @@ mails claim <name>                   # Claim name@mails.dev (max 10 per user)
 mails send --to <email> --subject <subject> --body <text>
 mails send --to <email> --subject <subject> --html "<h1>Hello</h1>"
 mails send --from "Name <email>" --to <email> --subject <subject> --body <text>
+mails send --to <email> --subject <subject> --body <text> --reply-to <email>
 mails send --to <email> --subject "Report" --body "See attached" --attach report.pdf
 ```
 
@@ -139,28 +140,18 @@ mails send --to <email> --subject "Report" --body "See attached" --attach report
 
 ```bash
 mails inbox                                  # List recent emails
+mails inbox --full-id                        # List with full email IDs (default shows 8-char prefix)
 mails inbox --mailbox agent@test.com         # Specific mailbox
 mails inbox --query "password reset"         # Full-text search (ranked by relevance)
 mails inbox --query "invoice" --direction inbound --limit 10
 mails inbox <id>                             # View email details + attachments
-
-# Advanced filters (mails.dev hosted / db9)
-mails inbox --has-attachments                # Only emails with attachments
-mails inbox --attachment-type pdf            # Filter by attachment type
-mails inbox --from github.com               # Filter by sender
-mails inbox --since 2026-03-01 --until 2026-03-20  # Time range
-mails inbox --header "X-Mailer:sendgrid"    # Filter by email header
-
-# Combine any filters
-mails inbox --from github.com --has-attachments --since 2026-03-13
-mails inbox --query "deploy" --attachment-type log --direction inbound
+mails inbox <id> --save                      # Download attachments to current directory
+mails inbox <id> --save ./downloads          # Download attachments to a directory
 ```
 
-### stats
-
-```bash
-mails stats senders                          # Top senders by frequency
-```
+> Advanced query capabilities (attachment/sender/time/header filters and sender
+> stats) are provided by the mails.dev hosted HTTP API only — they are not yet
+> wired through the `mails` CLI or SDK. See [docs/advanced-query-api.md](docs/advanced-query-api.md).
 
 ### code
 
@@ -177,6 +168,7 @@ The code is printed to stdout for easy piping: `CODE=$(mails code --to agent@tes
 mails config                    # Show all config
 mails config set <key> <value>  # Set a value
 mails config get <key>          # Get a value
+mails config path               # Show config file path
 ```
 
 ### sync
@@ -216,13 +208,6 @@ const emails = await getInbox('agent@mails.dev', { limit: 10 })
 const results = await searchInbox('agent@mails.dev', {
   query: 'password reset',
   direction: 'inbound',
-})
-
-// Advanced filters (mails.dev hosted / db9)
-const pdfs = await getInbox('agent@mails.dev', {
-  has_attachments: true,
-  attachment_type: 'pdf',
-  since: '2026-03-01',
 })
 
 // Wait for verification code
@@ -295,9 +280,13 @@ mails config set db9_database_id YOUR_DB_ID
 With db9, you get:
 - **Weighted FTS** — subject (highest) > sender > body > attachment text
 - **Attachment filters** — by type, by name, with/without attachments
-- **Sender & time filters** — `--from`, `--since`, `--until`
+- **Sender & time filters** — filter by sender address and received-time range
 - **Header queries** — search JSONB email headers
 - **Sender stats** — frequency ranking of all senders
+
+These advanced capabilities are exposed through the mails.dev hosted HTTP API
+(see [docs/advanced-query-api.md](docs/advanced-query-api.md)); the `mails` CLI/SDK
+currently forwards only `query`, `direction`, and `limit`.
 
 ### Remote (Worker API)
 
@@ -314,6 +303,9 @@ Queries the Worker HTTP API directly. Auto-enabled when `api_key` or `worker_url
 | `resend_api_key` | | Resend API key |
 | `default_from` | | Default sender address |
 | `storage_provider` | auto | `sqlite`, `db9`, or `remote` |
+| `db9_token` | | db9.ai cloud storage token |
+| `db9_database_id` | | db9.ai database ID |
+| `last_sync` | | Timestamp of last `mails sync` run (auto-managed) |
 
 ## Testing
 

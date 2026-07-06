@@ -5,7 +5,7 @@ AIエージェント向けのメールインフラ。プログラムでメール
 [![npm](https://img.shields.io/npm/v/mails)](https://www.npmjs.com/package/mails)
 [![license](https://img.shields.io/npm/l/mails)](https://github.com/chekusu/mails/blob/main/LICENSE)
 
-[English](https://github.com/chekusu/mails/blob/main/README.md) | [中文](https://github.com/chekusu/mails/blob/main/README.zh.md)
+[English](https://github.com/chekusu/mails/blob/main/README.en.md) | **日本語** | [中文](https://github.com/chekusu/mails/blob/main/README.md)
 
 ## 仕組み
 
@@ -76,7 +76,7 @@ bun install -g mails
 npx mails
 ```
 
-CLI は最大 24 時間に 1 回 npm を確認し、新しいバージョンがある場合は stderr に更新通知を表示します。`MAILS_NO_UPDATE_CHECK=1` で無効化できます。
+CLI は最大 24 時間に 1 回 npm を確認し、新しいバージョンがある場合は stderr に更新通知を表示します。`MAILS_NO_UPDATE_CHECK=1` で無効化できます（`NO_UPDATE_NOTIFIER=1` または `CI=1` が設定されている場合もスキップされます）。
 
 ## クイックスタート
 
@@ -132,6 +132,7 @@ mails claim <name>                   # name@mails.dev を取得（ユーザー�
 mails send --to <email> --subject <subject> --body <text>
 mails send --to <email> --subject <subject> --html "<h1>Hello</h1>"
 mails send --from "Name <email>" --to <email> --subject <subject> --body <text>
+mails send --to <email> --subject <subject> --body <text> --reply-to <email>
 mails send --to <email> --subject "Report" --body "See attached" --attach report.pdf
 ```
 
@@ -139,28 +140,18 @@ mails send --to <email> --subject "Report" --body "See attached" --attach report
 
 ```bash
 mails inbox                                  # 最近のメール一覧
+mails inbox --full-id                        # 完全なメール ID で一覧表示（デフォルトは先頭 8 文字）
 mails inbox --mailbox agent@test.com         # 特定のメールボックス
 mails inbox --query "password reset"         # 全文検索（関連性順）
 mails inbox --query "invoice" --direction inbound --limit 10
 mails inbox <id>                             # メール詳細 + 添付ファイル
-
-# 高度なフィルター（mails.dev ホスティング / db9）
-mails inbox --has-attachments                # 添付ファイル付きのみ
-mails inbox --attachment-type pdf            # 添付ファイルの種類で絞り込み
-mails inbox --from github.com               # 送信者で絞り込み
-mails inbox --since 2026-03-01 --until 2026-03-20  # 期間指定
-mails inbox --header "X-Mailer:sendgrid"    # メールヘッダーで絞り込み
-
-# 自由に組み合わせ可能
-mails inbox --from github.com --has-attachments --since 2026-03-13
-mails inbox --query "deploy" --attachment-type log --direction inbound
+mails inbox <id> --save                      # 添付ファイルをカレントディレクトリにダウンロード
+mails inbox <id> --save ./downloads          # 添付ファイルを指定ディレクトリにダウンロード
 ```
 
-### stats
-
-```bash
-mails stats senders                          # 送信者の頻度ランキング
-```
+> 高度なクエリ機能（添付 / 送信者 / 期間 / ヘッダーのフィルターと送信者統計）は
+> mails.dev ホスティングの HTTP API でのみ提供されており、`mails` CLI や SDK には
+> まだ接続されていません。詳細は [docs/advanced-query-api.md](docs/advanced-query-api.md) を参照。
 
 ### code
 
@@ -177,6 +168,7 @@ mails code --to agent@test.com --timeout 60 # タイムアウト指定
 mails config                    # 設定をすべて表示
 mails config set <key> <value>  # 値を設定
 mails config get <key>          # 値を取得
+mails config path               # 設定ファイルのパスを表示
 ```
 
 ### sync
@@ -216,13 +208,6 @@ const emails = await getInbox('agent@mails.dev', { limit: 10 })
 const results = await searchInbox('agent@mails.dev', {
   query: 'password reset',
   direction: 'inbound',
-})
-
-// 高度なフィルター（mails.dev ホスティング / db9）
-const pdfs = await getInbox('agent@mails.dev', {
-  has_attachments: true,
-  attachment_type: 'pdf',
-  since: '2026-03-01',
 })
 
 // 認証コード待機
@@ -295,9 +280,13 @@ mails config set db9_database_id YOUR_DB_ID
 db9を使うと以下の機能が利用可能：
 - **重み付きFTS** — 件名（最高優先）> 送信者 > 本文 > 添付ファイルテキスト
 - **添付ファイルフィルター** — 種類別、名前別、添付の有無
-- **送信者・期間フィルター** — `--from`、`--since`、`--until`
+- **送信者・期間フィルター** — 送信者アドレスと受信日時の範囲で絞り込み
 - **ヘッダー検索** — JSONB形式のメールヘッダーを検索
 - **送信者統計** — 全送信者の頻度ランキング
+
+これらの高度な機能は mails.dev ホスティングの HTTP API 経由で提供されます
+（[docs/advanced-query-api.md](docs/advanced-query-api.md) 参照）。`mails` CLI/SDK は
+現在 `query`、`direction`、`limit` のみを転送します。
 
 ### リモート（Worker API）
 
@@ -314,6 +303,9 @@ Worker HTTP APIに直接問い合わせます。`api_key` または `worker_url`
 | `resend_api_key` | | Resend APIキー |
 | `default_from` | | デフォルト送信者アドレス |
 | `storage_provider` | auto | `sqlite`、`db9`、`remote` |
+| `db9_token` | | db9.ai クラウドストレージ token |
+| `db9_database_id` | | db9.ai データベース ID |
+| `last_sync` | | 最後の `mails sync` 実行のタイムスタンプ（自動管理） |
 
 ## テスト
 

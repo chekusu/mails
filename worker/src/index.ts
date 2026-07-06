@@ -77,7 +77,7 @@ export default {
         }
       }
     } else {
-      response = Response.json({ name: 'mails-worker', version: '1.0.0' })
+      response = Response.json({ name: 'mails-worker', version: '1.5.6' })
     }
 
     // Add CORS headers to all responses

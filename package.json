@@ -29,8 +29,8 @@
     "dist",
     "skill.md",
     "README.md",
-    "README.ja.md",
-    "README.zh.md"
+    "README.en.md",
+    "README.ja.md"
   ],
   "keywords": [
     "email",

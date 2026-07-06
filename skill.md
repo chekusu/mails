@@ -22,23 +22,19 @@ mails claim <pick-a-name>
 
 **If you have a browser** (local machine): it will open automatically. The human approves, and the CLI receives the API key.
 
-**If you don't have a browser** (sandbox, SSH, CI): the CLI will show a code like this:
+**If you don't have a browser** (sandbox, SSH, CI): the CLI will print a confirmation URL like this:
 
 ```
   Claiming myagent@mails.dev
 
-  To complete, ask a human to visit:
+  Open this link to confirm:
 
-    https://mails.dev
-
-  and enter this code:
-
-    KDNR-CHPC
+    https://mails.dev?session=<session-id>&claim=myagent&source=cli
 
   Waiting...
 ```
 
-Relay the URL and code to your human user. Once they confirm, the CLI will continue and save the credentials to `~/.mails/config.json`.
+Relay the URL to your human user. Once they open it and confirm, the CLI will continue and save the credentials to `~/.mails/config.json`.
 
 Verify: `mails config get mailbox` should print your address. `mails config get api_key` should print `mk_...`.
 
@@ -112,7 +108,7 @@ mails version             Show version
 mails claim myagent
 ```
 
-Opens browser (or shows device code) for human approval. On success, saves `mailbox` and `api_key` to config. Each human user can create up to 10 mailboxes.
+Opens browser (or prints a confirmation URL in headless mode) for human approval. On success, saves `mailbox` and `api_key` to config. Each human user can create up to 10 mailboxes.
 
 ### send
 
@@ -120,39 +116,30 @@ Opens browser (or shows device code) for human approval. On success, saves `mail
 mails send --to user@example.com --subject "Subject" --body "Plain text body"
 mails send --to user@example.com --subject "Subject" --html "<h1>HTML body</h1>"
 mails send --from "Name <email>" --to user@example.com --subject "Subject" --body "Text"
+mails send --to user@example.com --subject "Subject" --body "Text" --reply-to replies@example.com
 mails send --to user@example.com --subject "Report" --body "See attached" --attach report.pdf
 mails send --to user@example.com --subject "Files" --body "Two files" --attach a.txt --attach b.csv
 ```
 
-Uses `default_from` from config if `--from` is not specified. Requires `resend_api_key` in config.
+Uses `default_from` from config if `--from` is not specified. In hosted mode (`api_key` configured) no Resend key is needed — hosted users get 100 free sends/month. For self-hosted or unlimited sending, set `resend_api_key` in config.
 
 ### inbox
 
 ```bash
 mails inbox                                  # List recent emails
+mails inbox --full-id                        # List with full email IDs (default shows 8-char prefix)
 mails inbox --mailbox addr@mails.dev         # Specify mailbox
 mails inbox --query "password reset"         # Full-text search (ranked by relevance)
 mails inbox --query "invoice" --direction inbound --limit 10
 mails inbox --direction outbound             # View sent email history
 mails inbox <email-id>                       # Show full email details (with attachments)
-
-# Advanced filters (mails.dev hosted / db9)
-mails inbox --has-attachments                # Only emails with attachments
-mails inbox --attachment-type pdf            # Filter by attachment type
-mails inbox --from github.com               # Filter by sender
-mails inbox --since 2026-03-01 --until 2026-03-20  # Time range
-mails inbox --header "X-Mailer:sendgrid"    # Filter by email header
-
-# Combine any filters
-mails inbox --from github.com --has-attachments --since 2026-03-13
-mails inbox --query "deploy" --attachment-type log --direction inbound
+mails inbox <email-id> --save                # Download attachments to current directory
+mails inbox <email-id> --save ./downloads    # Download attachments to a directory
 ```
 
-### stats
-
-```bash
-mails stats senders                          # Top senders by frequency
-```
+Advanced query capabilities (attachment/sender/time/header filters and sender
+stats) are provided by the mails.dev hosted HTTP API only (see the **API (Direct
+HTTP)** section below); they are not yet wired through the `mails` CLI or SDK.
 
 ### code
 
@@ -193,6 +180,9 @@ Pulls emails from your Worker (hosted or self-hosted) into local SQLite. Useful 
 | `storage_provider` | manual | `sqlite`, `db9`, or `remote` (auto-detected) |
 | `worker_url` | manual | Self-hosted Worker URL (enables remote provider) |
 | `worker_token` | manual | Mailbox token for self-hosted Worker |
+| `db9_token` | manual | db9.ai cloud storage token |
+| `db9_database_id` | manual | db9.ai database ID |
+| `last_sync` | `mails sync` | Timestamp of last sync run (auto-managed) |
 
 ## Self-Hosted Setup
 
@@ -258,14 +248,6 @@ const results = await searchInbox('myagent@mails.dev', {
   query: 'password reset',
   direction: 'inbound',
   limit: 5,
-})
-
-// Advanced filters (mails.dev hosted / db9)
-const pdfs = await getInbox('myagent@mails.dev', {
-  has_attachments: true,
-  attachment_type: 'pdf',
-  from: 'github.com',
-  since: '2026-03-01',
 })
 
 // Wait for verification code
@@ -376,6 +358,7 @@ curl -H "Authorization: Bearer YOUR_MAILBOX_TOKEN" \
 |----------|---------|-------------|
 | `MAILS_API_URL` | `https://api.mails.dev` | Override API base URL |
 | `MAILS_CLAIM_URL` | `https://mails.dev` | Override claim page URL |
+| `MAILS_NO_UPDATE_CHECK` | `0` | Set to `1` to disable npm update checks (`NO_UPDATE_NOTIFIER=1` or `CI=1` also disable them) |
 
 ## Links
 

@@ -167,7 +167,7 @@ describe('worker: routing and inbound email', () => {
     const rootJson = await root.json() as { name: string; version: string }
     expect(root.status).toBe(200)
     expect(rootJson.name).toBe('mails-worker')
-    expect(rootJson.version).toBe('1.0.0')
+    expect(rootJson.version).toBe('1.5.6')
 
     const unknown = await worker.fetch(authedRequest('http://localhost/api/unknown'), env)
     expect(unknown.status).toBe(404)

@@ -5,7 +5,7 @@
 [![npm](https://img.shields.io/npm/v/mails)](https://www.npmjs.com/package/mails)
 [![license](https://img.shields.io/npm/l/mails)](https://github.com/chekusu/mails/blob/main/LICENSE)
 
-[English](https://github.com/chekusu/mails/blob/main/README.md) | [日本語](https://github.com/chekusu/mails/blob/main/README.ja.md)
+[English](https://github.com/chekusu/mails/blob/main/README.en.md) | [日本語](https://github.com/chekusu/mails/blob/main/README.ja.md) | **中文**
 
 ## 工作原理
 
@@ -76,7 +76,7 @@ bun install -g mails
 npx mails
 ```
 
-CLI 最多每 24 小时检查一次 npm；发现新版本时，会在 stderr 打印升级提醒。可用 `MAILS_NO_UPDATE_CHECK=1` 关闭。
+CLI 最多每 24 小时检查一次 npm；发现新版本时，会在 stderr 打印升级提醒。可用 `MAILS_NO_UPDATE_CHECK=1` 关闭（设置 `NO_UPDATE_NOTIFIER=1` 或 `CI=1` 时也会跳过检查）。
 
 ## 快速开始
 
@@ -132,6 +132,7 @@ mails claim <name>                   # 认领 name@mails.dev（每人最多 10 �
 mails send --to <email> --subject <subject> --body <text>
 mails send --to <email> --subject <subject> --html "<h1>Hello</h1>"
 mails send --from "Name <email>" --to <email> --subject <subject> --body <text>
+mails send --to <email> --subject <subject> --body <text> --reply-to <email>
 mails send --to <email> --subject "Report" --body "See attached" --attach report.pdf
 ```
 
@@ -139,28 +140,18 @@ mails send --to <email> --subject "Report" --body "See attached" --attach report
 
 ```bash
 mails inbox                                  # 最近邮件列表
+mails inbox --full-id                        # 列表显示完整邮件 ID（默认只显示前 8 位）
 mails inbox --mailbox agent@test.com         # 指定邮箱
 mails inbox --query "password reset"         # 全文搜索（按相关性排序）
 mails inbox --query "invoice" --direction inbound --limit 10
 mails inbox <id>                             # 查看邮件详情 + 附件
-
-# 高级过滤（mails.dev 托管 / db9）
-mails inbox --has-attachments                # 只看带附件的邮件
-mails inbox --attachment-type pdf            # 按附件类型过滤
-mails inbox --from github.com               # 按发件人过滤
-mails inbox --since 2026-03-01 --until 2026-03-20  # 时间范围
-mails inbox --header "X-Mailer:sendgrid"    # 按邮件头过滤
-
-# 任意组合
-mails inbox --from github.com --has-attachments --since 2026-03-13
-mails inbox --query "deploy" --attachment-type log --direction inbound
+mails inbox <id> --save                      # 下载附件到当前目录
+mails inbox <id> --save ./downloads          # 下载附件到指定目录
 ```
 
-### stats
-
-```bash
-mails stats senders                          # 按发件人频率排行
-```
+> 高级查询能力（附件 / 发件人 / 时间 / 邮件头过滤，以及发件人统计）目前仅通过
+> mails.dev 托管 HTTP API 提供，尚未接入 `mails` CLI 或 SDK。详见
+> [docs/advanced-query-api.md](docs/advanced-query-api.md)。
 
 ### code
 
@@ -177,6 +168,7 @@ mails code --to agent@test.com --timeout 60 # 自定义超时
 mails config                    # 查看所有配置
 mails config set <key> <value>  # 设置配置项
 mails config get <key>          # 获取配置项
+mails config path               # 显示配置文件路径
 ```
 
 ### sync
@@ -216,13 +208,6 @@ const emails = await getInbox('agent@mails.dev', { limit: 10 })
 const results = await searchInbox('agent@mails.dev', {
   query: 'password reset',
   direction: 'inbound',
-})
-
-// 高级过滤（mails.dev 托管 / db9）
-const pdfs = await getInbox('agent@mails.dev', {
-  has_attachments: true,
-  attachment_type: 'pdf',
-  since: '2026-03-01',
 })
 
 // 等待验证码
@@ -295,9 +280,13 @@ mails config set db9_database_id YOUR_DB_ID
 使用 db9 后可获得：
 - **加权全文搜索** — 主题（最高权重）> 发件人 > 正文 > 附件文本
 - **附件过滤** — 按类型、按名称、有/无附件
-- **发件人 & 时间过滤** — `--from`、`--since`、`--until`
+- **发件人 & 时间过滤** — 按发件人地址和接收时间范围过滤
 - **邮件头查询** — 搜索 JSONB 邮件头
 - **发件人统计** — 所有发件人的频率排行
+
+以上高级能力通过 mails.dev 托管 HTTP API 暴露（见
+[docs/advanced-query-api.md](docs/advanced-query-api.md)）；`mails` CLI/SDK
+目前只透传 `query`、`direction` 和 `limit`。
 
 ### Remote（Worker API）
 
@@ -314,6 +303,9 @@ mails config set db9_database_id YOUR_DB_ID
 | `resend_api_key` | | Resend API 密钥 |
 | `default_from` | | 默认发件人地址 |
 | `storage_provider` | auto | `sqlite`、`db9` 或 `remote` |
+| `db9_token` | | db9.ai 云存储 token |
+| `db9_database_id` | | db9.ai 数据库 ID |
+| `last_sync` | | 上次 `mails sync` 运行的时间戳（自动管理） |
 
 ## 测试
 

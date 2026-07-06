@@ -18,8 +18,8 @@ Commands:
 Claim:
   mails claim <name>                    Claim name@mails.dev (max 10 per user)
                                         Opens browser for human approval.
-                                        In headless mode, shows a device code
-                                        for the human to enter at mails.dev.
+                                        In headless mode, prints a confirmation
+                                        URL for the human to open at mails.dev.
 
 Send:
   mails send --to <email> --subject <subject> --body <text>

@@ -1,12 +1,18 @@
 # 高级查询 API（mails.dev 托管服务）
 
-状态：已实现
+状态：托管 HTTP API 已提供；尚未接入 `mails` CLI / SDK
 
 ## 概述
 
 mails.dev 托管服务基于 DB9（PostgreSQL）提供高级邮件查询能力，超越基础的关键词搜索。
 
-这些能力通过 `GET /v1/inbox` 的查询参数暴露，CLI 端通过 `mails inbox` 命令的 flags 使用。所有参数可自由组合。
+这些能力通过托管 API 的 `GET /v1/inbox` 与 `GET /v1/stats/senders` 查询参数暴露。
+
+> **重要**：以下高级过滤参数与发件人统计目前**仅在托管 HTTP API 上可用**。
+> 本仓库的 `mails` CLI（`src/cli/commands/inbox.ts`）与 SDK 只透传 `query`、
+> `direction`、`limit`（搜索时另加 `query`）；其他参数会被静默忽略。自部署 Worker
+> （`worker/src/index.ts` 的 `/api/inbox`）同样只支持 `query`（`LIKE` 匹配）、
+> `direction`、`limit`、`offset`。若需要下述高级能力，请直接调用托管 HTTP API。
 
 ## API 参数
 
@@ -38,79 +44,65 @@ mails.dev 托管服务基于 DB9（PostgreSQL）提供高级邮件查询能力�
 }
 ```
 
-## CLI 用法
+## HTTP 用法（托管 API）
+
+调用需带 `Authorization: Bearer mk_YOUR_API_KEY`。所有参数可自由组合。
 
 ### 基础搜索
 
 ```bash
 # FTS 全文搜索（按相关性排序）
-mails inbox --query "password reset"
-
-# 搜索附件内容（PDF 提取的文字等）
-mails inbox --query "quarterly report"
+curl -H "Authorization: Bearer mk_YOUR_API_KEY" \
+  "https://api.mails.dev/v1/inbox?query=password+reset"
 ```
 
 ### 附件过滤
 
 ```bash
 # 只看有附件的邮件
-mails inbox --has-attachments
+curl -H "Authorization: Bearer mk_YOUR_API_KEY" \
+  "https://api.mails.dev/v1/inbox?has_attachments=true"
 
 # 按附件类型过滤
-mails inbox --attachment-type pdf
-mails inbox --attachment-type csv
+curl -H "Authorization: Bearer mk_YOUR_API_KEY" \
+  "https://api.mails.dev/v1/inbox?attachment_type=pdf"
 
-# 组合：搜索带 PDF 附件且包含 "invoice" 的邮件
-mails inbox --query "invoice" --attachment-type pdf
+# 组合：带 PDF 附件且包含 "invoice"
+curl -H "Authorization: Bearer mk_YOUR_API_KEY" \
+  "https://api.mails.dev/v1/inbox?query=invoice&attachment_type=pdf"
 ```
 
 ### 发件人过滤
 
 ```bash
-# 按发件人过滤
-mails inbox --from github.com
-mails inbox --from "noreply@stripe.com"
+curl -H "Authorization: Bearer mk_YOUR_API_KEY" \
+  "https://api.mails.dev/v1/inbox?from=github.com"
 ```
 
 ### 时间范围
 
 ```bash
-# 最近 7 天
-mails inbox --since 2026-03-13
-
 # 指定区间
-mails inbox --since 2026-03-01 --until 2026-03-20
+curl -H "Authorization: Bearer mk_YOUR_API_KEY" \
+  "https://api.mails.dev/v1/inbox?since=2026-03-01&until=2026-03-20"
 
 # 组合：上周来自 GitHub 的带附件邮件
-mails inbox --from github.com --has-attachments --since 2026-03-13
+curl -H "Authorization: Bearer mk_YOUR_API_KEY" \
+  "https://api.mails.dev/v1/inbox?from=github.com&has_attachments=true&since=2026-03-13"
 ```
 
 ### 邮件头查询
 
 ```bash
-# 按自定义邮件头过滤（JSONB 查询）
-mails inbox --header "X-Mailer:sendgrid"
-mails inbox --header "List-Unsubscribe:example.com"
+curl -H "Authorization: Bearer mk_YOUR_API_KEY" \
+  "https://api.mails.dev/v1/inbox?header=X-Mailer:sendgrid"
 ```
 
 ### 发件人统计
 
 ```bash
-# 查看发件人频率排行
-mails stats senders
-```
-
-### 组合查询示例
-
-```bash
-# 来自 GitHub、带附件、最近 7 天、搜索 "deploy"
-mails inbox --from github.com --has-attachments --since 2026-03-13 --query "deploy"
-
-# 所有 inbound 的 PDF 附件邮件
-mails inbox --direction inbound --attachment-type pdf
-
-# 搜索验证码邮件
-mails inbox --query "verification code" --since 2026-03-19
+curl -H "Authorization: Bearer mk_YOUR_API_KEY" \
+  "https://api.mails.dev/v1/stats/senders"
 ```
 
 ## FTS 搜索权重
@@ -134,24 +126,24 @@ mails inbox --query "verification code" --since 2026-03-19
 
 ## 回退行为
 
-当 DB9 不可用时，查询自动回退到 D1（Cloudflare SQLite）：
+当 DB9 不可用时，托管服务的查询自动回退到 D1（Cloudflare SQLite）：
 - FTS 降级为 `LIKE` 模糊匹配
 - 高级过滤参数不可用
 - 排序固定为 `received_at DESC`
 
-## 对 StorageProvider 接口的影响
+## CLI / SDK 现状
 
-Remote provider（`src/providers/storage/remote.ts`）已支持将这些参数透传给 Worker API。CLI 使用 `storage_provider = 'remote'`（hosted 模式默认值）时自动生效。
-
-DB9 provider（`src/providers/storage/db9.ts`）的 `searchEmails` 和 `getEmails` 已实现等价的本地 SQL 查询。
-
-SQLite provider 不受影响——高级过滤参数仅在 remote/db9 模式下生效。
+- CLI（`src/cli/commands/inbox.ts`）：仅解析并转发 `query`、`direction`、`limit`；
+  `has_attachments`、`attachment_type`、`from`、`since`、`until`、`header` 会被忽略。
+- Remote provider（`src/providers/storage/remote.ts`）：`getEmails` 仅发送
+  `limit`、`offset`、`direction`；`searchEmails` 额外发送 `query`。
+- 因此上述高级参数暂时只能通过直接调用托管 HTTP API 使用。若未来要接入 CLI/SDK，
+  需要扩展 `EmailQueryOptions`（`src/core/types.ts`）并在 CLI 与各 provider 中打通。
 
 ## 实现位置
 
-| 组件 | 文件 |
+| 组件 | 位置 |
 |------|------|
-| Worker API 路由 | `worker/src/index.ts`, `worker/src/routes.ts` |
-| DB9 查询引擎 | `worker/src/db9.ts` |
-| DB9 Schema | `worker/db9-schema.sql` |
-| E2E 测试 | `worker/test-db9.ts`（65 assertions） |
+| 自部署 Worker API 路由 | `worker/src/index.ts`（所有路由集中于此，无独立 `routes.ts`） |
+| DB9 查询引擎 / Schema | mails.dev 托管服务基础设施（不在本仓库中） |
+| 本仓库存储 provider | `src/providers/storage/{sqlite,remote,db9}.ts` |
