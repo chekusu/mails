@@ -9,10 +9,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: macos-latest
+          - os: hayabuild-macos
             target: bun-darwin-arm64
             artifact: mails-darwin-arm64
-          - os: macos-latest
+          - os: hayabuild-macos
             target: bun-darwin-x64
             artifact: mails-darwin-x64
           - os: ubuntu-latest
