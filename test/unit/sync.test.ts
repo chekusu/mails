@@ -204,10 +204,14 @@ describe('CLI: sync command', () => {
     await syncCommand([])
 
     const config = loadConfig()
-    expect(config.last_sync).toBeDefined()
-    // last_sync should be a recent ISO string
-    const syncTime = new Date(config.last_sync!).getTime()
-    expect(syncTime).toBeGreaterThan(Date.now() - 10000)
+    expect(config.last_sync).toBe('2025-05-31T23:59:59.999Z')
+    const later = makeEmail({ id: 'e2' })
+    globalThis.fetch = mock(async (url: string) => {
+      const cursor = new URL(url).searchParams.get('since')!
+      return Response.json({ emails: [later].filter(email => email.received_at > cursor), has_more: false })
+    }) as typeof fetch
+    await syncCommand([])
+    expect(saved.map(email => email.id)).toEqual(['e1', 'e2'])
   })
 
   test('sync errors when no worker_url or api_key', async () => {

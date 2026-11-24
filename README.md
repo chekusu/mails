@@ -305,7 +305,7 @@ mails config set db9_database_id YOUR_DB_ID
 | `storage_provider` | auto | `sqlite`、`db9` 或 `remote` |
 | `db9_token` | | db9.ai 云存储 token |
 | `db9_database_id` | | db9.ai 数据库 ID |
-| `last_sync` | | 上次 `mails sync` 运行的时间戳（自动管理） |
+| `last_sync` | | 根据最近已保存邮件更新的增量同步游标（自动管理） |
 
 ## 测试
 

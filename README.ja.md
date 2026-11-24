@@ -305,7 +305,7 @@ Worker HTTP APIに直接問い合わせます。`api_key` または `worker_url`
 | `storage_provider` | auto | `sqlite`、`db9`、`remote` |
 | `db9_token` | | db9.ai クラウドストレージ token |
 | `db9_database_id` | | db9.ai データベース ID |
-| `last_sync` | | 最後の `mails sync` 実行のタイムスタンプ（自動管理） |
+| `last_sync` | | 最後に保存したメールから更新する増分同期カーソル（自動管理） |
 
 ## テスト
 
