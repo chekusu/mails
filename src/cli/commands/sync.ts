@@ -61,6 +61,7 @@ export async function syncCommand(args: string[]) {
 
   let offset = 0
   let synced = 0
+  let newestSaved = 0
 
   console.log(`Syncing from ${baseUrl} since ${syncSince}...`)
 
@@ -86,6 +87,8 @@ export async function syncCommand(args: string[]) {
 
     for (const email of data.emails) {
       await storage.saveEmail(email)
+      const received = Date.parse(email.received_at)
+      if (received > newestSaved) newestSaved = received
       synced++
     }
 
@@ -95,9 +98,10 @@ export async function syncCommand(args: string[]) {
     process.stdout.write(`\r  ${synced}/${data.total} emails synced`)
   }
 
-  // Update last_sync
-  const now = new Date().toISOString()
-  setConfigValue('last_sync', now)
-
-  console.log(`\nSynced ${synced} email(s). Last sync: ${now}`)
+  // The endpoint uses a strict timestamp comparison. Replay the last millisecond
+  // so later arrivals with the same timestamp are included. Storage upserts by ID.
+  if (newestSaved > 0) {
+    setConfigValue('last_sync', new Date(newestSaved - 1).toISOString())
+  }
+  console.log(`\nSynced ${synced} email(s).`)
 }

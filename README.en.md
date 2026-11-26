@@ -305,7 +305,7 @@ Queries the Worker HTTP API directly. Auto-enabled when `api_key` or `worker_url
 | `storage_provider` | auto | `sqlite`, `db9`, or `remote` |
 | `db9_token` | | db9.ai cloud storage token |
 | `db9_database_id` | | db9.ai database ID |
-| `last_sync` | | Timestamp of last `mails sync` run (auto-managed) |
+| `last_sync` | | Incremental cursor from the latest saved email (auto-managed) |
 
 ## Testing
 
