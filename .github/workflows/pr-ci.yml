@@ -1,0 +1,26 @@
+name: PR CI
+
+# Checks every pull request before it merges (Bruce 2026-11-26: PRs merge when CI is green).
+# Public repository: runs on GitHub-hosted runners (free for public repos), so outside
+# contributors' fork PRs never run on the sandbank-tyo runners. No secrets needed.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run test
