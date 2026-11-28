@@ -1,8 +1,9 @@
 name: PR CI
 
 # Checks every pull request before it merges (Bruce 2026-11-26: PRs merge when CI is green).
-# Public repository: runs on GitHub-hosted runners (free for public repos), so outside
-# contributors' fork PRs never run on the sandbank-tyo runners. No secrets needed.
+# Runs on the org's Hayabuild Linux runner (hayabuild-linux) instead of a GitHub-hosted one.
+# Fork PRs from outside contributors run only after a maintainer approves them (the repository
+# requires approval for all external contributors). No secrets needed.
 
 on:
   pull_request:
@@ -16,7 +17,7 @@ concurrency:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: hayabuild-linux
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

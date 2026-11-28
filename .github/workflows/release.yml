@@ -15,10 +15,11 @@ jobs:
           - os: hayabuild-macos
             target: bun-darwin-x64
             artifact: mails-darwin-x64
-          - os: ubuntu-latest
+          - os: hayabuild-linux
             target: bun-linux-x64
             artifact: mails-linux-x64
-          - os: ubuntu-24.04-arm
+          # No arm64 Linux runner: bun cross-compiles from x64, as darwin-x64 does on the arm64 Mac.
+          - os: hayabuild-linux
             target: bun-linux-arm64
             artifact: mails-linux-arm64
 
@@ -36,10 +37,12 @@ jobs:
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
+          # Only hands the binary to the release job below.
+          retention-days: 1
 
   release:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: hayabuild-linux
     permissions:
       contents: write
     steps:
@@ -53,6 +56,7 @@ jobs:
           files: artifacts/*
 
   publish:
+    # Stays GitHub-hosted: npm trusted publishing and --provenance accept only GitHub-hosted runners.
     runs-on: ubuntu-latest
     permissions:
       contents: write
